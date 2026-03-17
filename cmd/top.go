@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -261,7 +262,14 @@ func runTop(cmd *cobra.Command, args []string) error {
 		return RunDispatch()
 	}
 
-	m := tui.NewModel(gatherFn, dispatchFn)
+	maxSlots := 3
+	setMaxSlots := func(n int) {
+		maxSlots = n
+		// update env so dispatch picks it up
+		os.Setenv("MAX_SLOTS", fmt.Sprintf("%d", n))
+	}
+
+	m := tui.NewModel(gatherFn, dispatchFn, maxSlots, setMaxSlots)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err

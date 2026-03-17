@@ -31,13 +31,20 @@ type Model struct {
 	gatherFn   GatherFunc
 	dispatchFn DispatchFunc
 	statusMsg  string
+	maxSlots   int
 	width      int
 	height     int
 	quitting   bool
 }
 
-func NewModel(gatherFn GatherFunc, dispatchFn DispatchFunc) Model {
-	return Model{gatherFn: gatherFn, dispatchFn: dispatchFn}
+// SetMaxSlotsFunc is called when user changes max slots
+type SetMaxSlotsFunc func(n int)
+
+var setMaxSlotsFn SetMaxSlotsFunc
+
+func NewModel(gatherFn GatherFunc, dispatchFn DispatchFunc, maxSlots int, setMaxSlots SetMaxSlotsFunc) Model {
+	setMaxSlotsFn = setMaxSlots
+	return Model{gatherFn: gatherFn, dispatchFn: dispatchFn, maxSlots: maxSlots}
 }
 
 func tickCmd() tea.Cmd {
@@ -70,6 +77,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "r":
 			m.statusMsg = "refreshing..."
 			return m, func() tea.Msg { d, _ := m.gatherFn(); return d }
+		case "+", "=":
+			if m.maxSlots < 5 {
+				m.maxSlots++
+				if setMaxSlotsFn != nil {
+					setMaxSlotsFn(m.maxSlots)
+				}
+				m.statusMsg = fmt.Sprintf("max agents: %d", m.maxSlots)
+			}
+		case "-":
+			if m.maxSlots > 1 {
+				m.maxSlots--
+				if setMaxSlotsFn != nil {
+					setMaxSlotsFn(m.maxSlots)
+				}
+				m.statusMsg = fmt.Sprintf("max agents: %d", m.maxSlots)
+			}
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -128,8 +151,8 @@ func (m Model) View() string {
 	var sections []string
 
 	// -- cluster --
-	clusterContent := fmt.Sprintf(" Node: %s %s  |  Agents: %d running, %d completed",
-		d.NodeName, d.NodeVersion, running, completed)
+	clusterContent := fmt.Sprintf(" Node: %s %s  |  Agents: %d running, %d completed  |  Max slots: %d",
+		d.NodeName, d.NodeVersion, running, completed, m.maxSlots)
 	clusterBox := border.Copy().BorderTop(true).Render(
 		titleFg.Render(" Cluster") + "\n" + clusterContent)
 	sections = append(sections, clusterBox)
@@ -202,7 +225,7 @@ func (m Model) View() string {
 	if m.statusMsg != "" {
 		sections = append(sections, yellow.Render(" "+m.statusMsg))
 	}
-	sections = append(sections, dim.Render(" q: quit  |  n: dispatch now  |  r: refresh  |  refreshes every 5s"))
+	sections = append(sections, dim.Render(" q: quit  |  n: dispatch now  |  r: refresh  |  +/-: max agents  |  refreshes every 5s"))
 
 	return strings.Join(sections, "\n")
 }

@@ -52,7 +52,7 @@ func runDispatchInner() (string, error) {
 	}
 
 	loc, _ := time.LoadLocation("America/New_York")
-	now := time.Now().In(loc).Format("2006-01-02 3:04:05 PM MST")
+	now := time.Now().In(loc).Format("3:04 PM MST")
 	log = append(log, fmt.Sprintf("[dispatcher] %s starting scan", now))
 
 	eligible, err := github.GetEligibleIssues(ctx)
@@ -130,7 +130,7 @@ func runDispatchInner() (string, error) {
 		created++
 	}
 
-	now = time.Now().In(loc).Format("2006-01-02 3:04:05 PM MST")
+	now = time.Now().In(loc).Format("3:04 PM MST")
 	log = append(log, fmt.Sprintf("[dispatcher] %s scan complete -- created %d jobs", now, created))
 	return strings.Join(log, "\n") + "\n", nil
 }
