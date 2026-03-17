@@ -41,7 +41,7 @@ func runDispatchInner() (string, error) {
 	ctx := context.Background()
 	var log []string
 
-	maxSlots := 3
+	maxSlots := 5
 	if v := os.Getenv("MAX_SLOTS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			maxSlots = n

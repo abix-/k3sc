@@ -352,7 +352,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 		return RunDispatch()
 	}
 
-	maxSlots := 3
+	maxSlots := 5
 	setMaxSlots := func(n int) {
 		maxSlots = n
 		os.Setenv("MAX_SLOTS", fmt.Sprintf("%d", n))
