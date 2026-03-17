@@ -50,6 +50,11 @@ cd "${WORKSPACE}"
 git config user.name "${AGENT_ID}"
 git config user.email "${AGENT_ID}@endless.dev"
 
+# read github token from mounted file if env var not set
+if [ -z "${GITHUB_TOKEN:-}" ] && [ -f /home/claude/.gh-token ]; then
+    export GITHUB_TOKEN=$(cat /home/claude/.gh-token)
+fi
+
 # GITHUB_TOKEN env var is auto-detected by gh CLI -- no explicit login needed
 
 # verify auth works

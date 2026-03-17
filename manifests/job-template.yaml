@@ -35,11 +35,6 @@ spec:
                 secretKeyRef:
                   name: claude-secrets
                   key: CLAUDE_CODE_OAUTH_TOKEN
-            - name: GITHUB_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: claude-secrets
-                  key: GITHUB_TOKEN
           volumeMounts:
             - name: cargo-target
               mountPath: /cargo-target
@@ -58,6 +53,9 @@ spec:
               readOnly: true
             - name: claude-md
               mountPath: /home/claude/.claude/CLAUDE.md
+              readOnly: true
+            - name: gh-token
+              mountPath: /home/claude/.gh-token
               readOnly: true
       volumes:
         - name: cargo-target
@@ -84,4 +82,8 @@ spec:
         - name: claude-md
           hostPath:
             path: /mnt/c/Users/Abix/.claude/CLAUDE.md
+            type: File
+        - name: gh-token
+          hostPath:
+            path: /mnt/c/Users/Abix/.gh-token
             type: File
