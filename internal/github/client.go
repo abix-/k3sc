@@ -151,28 +151,66 @@ func GetAllOpenIssues(ctx context.Context) ([]types.Issue, error) {
 	return result, nil
 }
 
-// ClaimIssue transitions an issue from ready/needs-review to claimed with an owner label.
-// It removes ready and needs-review labels, adds claimed + owner label, and posts a claim comment.
-func ClaimIssue(ctx context.Context, repo types.Repo, issueNumber int, agentName string) error {
+// allWorkflowLabels are the labels the operator manages. On every transition,
+// ALL of these are removed and exactly the target labels are added.
+var allWorkflowLabels = []string{"ready", "needs-review", "needs-human", "waiting"}
+
+// SetIssueLabels removes all workflow + owner labels, then adds exactly the given labels.
+// This is the ONLY function that should modify workflow labels on issues.
+func SetIssueLabels(ctx context.Context, repo types.Repo, issueNumber int, addLabels []string, comment string) error {
 	client := newClient(ctx)
 
-	// remove ready and needs-review, add owner label
-	for _, label := range []string{"ready", "needs-review"} {
-		client.Issues.RemoveLabelForIssue(ctx, repo.Owner, repo.Name, issueNumber, label)
-	}
-	_, _, err := client.Issues.AddLabelsToIssue(ctx, repo.Owner, repo.Name, issueNumber, []string{agentName})
+	// get current labels to find owner labels to remove
+	issue, _, err := client.Issues.Get(ctx, repo.Owner, repo.Name, issueNumber)
 	if err != nil {
-		return fmt.Errorf("add labels: %w", err)
+		return fmt.Errorf("get issue: %w", err)
 	}
 
-	// post claim comment
-	body := fmt.Sprintf("## Claude\n- State: ready -> claimed\n- Owner: %s\n- Intent: dispatched by k3sc dispatcher", agentName)
-	_, _, err = client.Issues.CreateComment(ctx, repo.Owner, repo.Name, issueNumber, &gh.IssueComment{Body: &body})
-	if err != nil {
-		return fmt.Errorf("post comment: %w", err)
+	// remove all workflow labels + any owner labels
+	for _, l := range issue.Labels {
+		name := l.GetName()
+		isWorkflow := false
+		for _, wl := range allWorkflowLabels {
+			if name == wl {
+				isWorkflow = true
+				break
+			}
+		}
+		isOwner := strings.HasPrefix(name, "claude-") || strings.HasPrefix(name, "codex-")
+		if isWorkflow || isOwner {
+			client.Issues.RemoveLabelForIssue(ctx, repo.Owner, repo.Name, issueNumber, name)
+		}
+	}
+
+	// add target labels
+	if len(addLabels) > 0 {
+		_, _, err = client.Issues.AddLabelsToIssue(ctx, repo.Owner, repo.Name, issueNumber, addLabels)
+		if err != nil {
+			return fmt.Errorf("add labels: %w", err)
+		}
+	}
+
+	// post comment
+	if comment != "" {
+		_, _, err = client.Issues.CreateComment(ctx, repo.Owner, repo.Name, issueNumber, &gh.IssueComment{Body: &comment})
+		if err != nil {
+			return fmt.Errorf("post comment: %w", err)
+		}
 	}
 
 	return nil
+}
+
+// ClaimIssue sets the owner label on an issue (removes all other workflow/owner labels).
+func ClaimIssue(ctx context.Context, repo types.Repo, issueNumber int, agentName string) error {
+	return SetIssueLabels(ctx, repo, issueNumber, []string{agentName},
+		fmt.Sprintf("## k3sc operator\n- Claimed by %s", agentName))
+}
+
+// UnclaimIssue removes owner label and sets a workflow state label.
+func UnclaimIssue(ctx context.Context, repo types.Repo, issueNumber int, ownerLabel, returnLabel string) error {
+	return SetIssueLabels(ctx, repo, issueNumber, []string{returnLabel},
+		fmt.Sprintf("## k3sc operator\n- Released by %s -> %s", ownerLabel, returnLabel))
 }
 
 // isK3sAgent returns true if the owner label is a k3s letter-based agent (claude-a through claude-z).
@@ -200,18 +238,6 @@ func GetOwnedIssues(ctx context.Context) ([]types.Issue, error) {
 	return result, nil
 }
 
-// UnclaimIssue removes the owner label and claimed label, then adds returnLabel (ready or needs-review).
-func UnclaimIssue(ctx context.Context, repo types.Repo, issueNumber int, ownerLabel, returnLabel string) error {
-	client := newClient(ctx)
-	client.Issues.RemoveLabelForIssue(ctx, repo.Owner, repo.Name, issueNumber, ownerLabel)
-	_, _, err := client.Issues.AddLabelsToIssue(ctx, repo.Owner, repo.Name, issueNumber, []string{returnLabel})
-	if err != nil {
-		return fmt.Errorf("add %s label: %w", returnLabel, err)
-	}
-	body := fmt.Sprintf("## Claude\n- Orphan cleanup: removed owner label `%s` (no active pod)\n- State: -> %s", ownerLabel, returnLabel)
-	_, _, err = client.Issues.CreateComment(ctx, repo.Owner, repo.Name, issueNumber, &gh.IssueComment{Body: &body})
-	return err
-}
 
 // HasOpenPR checks if there's an open PR for a given issue-N branch.
 func HasOpenPR(ctx context.Context, repo types.Repo, issueNumber int) (bool, error) {
