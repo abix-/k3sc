@@ -77,7 +77,7 @@ type dashboard struct {
 	tasks         []types.TaskInfo
 	issues        []types.Issue
 	prs           []types.PullRequest
-	dispatcherLog string
+	operatorLog string
 }
 
 func gather(cs *kubernetes.Clientset) (*dashboard, error) {
@@ -148,7 +148,7 @@ func gather(cs *kubernetes.Clientset) (*dashboard, error) {
 	}()
 	go func() {
 		defer wg.Done()
-		d, e := k8s.GetDispatcherLog(ctx, cs)
+		d, e := k8s.GetOperatorLog(ctx, cs)
 		mu.Lock()
 		dispLog = d
 		if e != nil {
@@ -180,7 +180,7 @@ func gather(cs *kubernetes.Clientset) (*dashboard, error) {
 		tasks:         tasks,
 		issues:        issues,
 		prs:           prs,
-		dispatcherLog: dispLog,
+		operatorLog: dispLog,
 	}, nil
 }
 
@@ -188,12 +188,12 @@ func printDashboard(d *dashboard) {
 	fmt.Println("=== CLUSTER ===")
 	fmt.Printf("Node: %s Ready %s\n\n", d.nodeName, d.nodeVersion)
 
-	// 1. Dispatcher
-	fmt.Println("=== DISPATCHER ===")
-	if d.dispatcherLog == "" {
-		fmt.Println("  (no dispatcher runs found)")
+	// 1. Operator
+	fmt.Println("=== OPERATOR ===")
+	if d.operatorLog == "" {
+		fmt.Println("  (no operator logs)")
 	} else {
-		for _, line := range strings.Split(strings.TrimSpace(d.dispatcherLog), "\n") {
+		for _, line := range strings.Split(strings.TrimSpace(d.operatorLog), "\n") {
 			if line != "" {
 				fmt.Printf("  %s\n", line)
 			}
@@ -264,7 +264,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 			Tasks:         d.tasks,
 			Issues:        d.issues,
 			PRs:           d.prs,
-			DispatcherLog: d.dispatcherLog,
+			OperatorLog: d.operatorLog,
 		}, nil
 	}
 
@@ -287,7 +287,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 		}()
 		go func() {
 			defer wg2.Done()
-			d, _ := k8s.GetDispatcherLog(ctx, cs)
+			d, _ := k8s.GetOperatorLog(ctx, cs)
 			mu2.Lock()
 			dispLog = d
 			mu2.Unlock()
@@ -330,7 +330,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 			Tasks:         tasks,
 			Issues:        current.Issues,
 			PRs:           current.PRs,
-			DispatcherLog: dispLog,
+			OperatorLog: dispLog,
 			LiveLogs:      liveLogs,
 		}, nil
 	}

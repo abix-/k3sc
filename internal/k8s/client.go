@@ -526,29 +526,32 @@ func CreateJobFromTemplate(ctx context.Context, cs *kubernetes.Clientset, templa
 	return created.Name, nil
 }
 
-func GetDispatcherLog(ctx context.Context, cs *kubernetes.Clientset) (string, error) {
-	pods, err := cs.CoreV1().Pods(types.Namespace).List(ctx, metav1.ListOptions{})
+func GetOperatorLog(ctx context.Context, cs *kubernetes.Clientset) (string, error) {
+	pods, err := cs.CoreV1().Pods(types.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app=k3sc-operator",
+	})
 	if err != nil {
 		return "", err
 	}
+	if len(pods.Items) == 0 {
+		return "(no operator pod found)", nil
+	}
 
-	// find most recent dispatcher pod
-	var dispatchers []corev1.Pod
-	for _, p := range pods.Items {
-		if strings.Contains(p.Name, "dispatcher") {
-			dispatchers = append(dispatchers, p)
+	// get the running operator pod
+	var latest *corev1.Pod
+	for i := range pods.Items {
+		if pods.Items[i].Status.Phase == corev1.PodRunning {
+			latest = &pods.Items[i]
 		}
 	}
-	if len(dispatchers) == 0 {
-		return "(no dispatcher runs found)", nil
+	if latest == nil {
+		latest = &pods.Items[0]
 	}
 
-	sort.Slice(dispatchers, func(i, j int) bool {
-		return dispatchers[i].CreationTimestamp.Before(&dispatchers[j].CreationTimestamp)
+	var lines int64 = 30
+	req := cs.CoreV1().Pods(types.Namespace).GetLogs(latest.Name, &corev1.PodLogOptions{
+		TailLines: &lines,
 	})
-
-	latest := dispatchers[len(dispatchers)-1]
-	req := cs.CoreV1().Pods(types.Namespace).GetLogs(latest.Name, &corev1.PodLogOptions{})
 	stream, err := req.Stream(ctx)
 	if err != nil {
 		return "", err

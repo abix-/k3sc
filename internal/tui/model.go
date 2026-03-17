@@ -25,7 +25,7 @@ type Data struct {
 	Tasks         []types.TaskInfo
 	Issues        []types.Issue
 	PRs           []types.PullRequest
-	DispatcherLog string
+	OperatorLog string
 	LiveLogs      []LiveLog
 }
 
@@ -51,7 +51,7 @@ type Model struct {
 	statusMsg    string
 	maxSlots     int
 	paused       bool
-	showDispatch bool
+	showOperator bool
 	showLive     bool
 	showErrors   bool
 	width        int
@@ -67,7 +67,7 @@ func NewModel(gatherFn GatherFunc, k8sGatherFn K8sGatherFunc, dispatchFn Dispatc
 		setMaxSlots:  setMaxSlots,
 		errorLines:   errorLines,
 		maxSlots:     maxSlots,
-		showDispatch: true,
+		showOperator: true,
 		showLive:     true,
 	}
 }
@@ -116,7 +116,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusMsg = "dispatcher resumed"
 			}
 		case "d":
-			m.showDispatch = !m.showDispatch
+			m.showOperator = !m.showOperator
 		case "e":
 			m.showErrors = !m.showErrors
 		case "l":
@@ -186,7 +186,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		dispLog := string(msg)
 		d, _ := m.gatherFn()
 		if d != nil {
-			d.DispatcherLog = dispLog
+			d.OperatorLog = dispLog
 			m.data = d
 		}
 		m.statusMsg = "dispatch complete"
@@ -247,17 +247,17 @@ func (m Model) renderView(maxVisiblePods int) string {
 	sections = append(sections, titleFg.Render(" Cluster")+" "+clusterContent)
 
 	// -- dispatcher (toggle with d) --
-	if m.showDispatch {
+	if m.showOperator {
 		var dispLines []string
-		if d.DispatcherLog == "" {
-			dispLines = append(dispLines, dim.Render("  (no dispatcher runs found)"))
+		if d.OperatorLog == "" {
+			dispLines = append(dispLines, dim.Render("  (no operator logs)"))
 		} else {
-			for _, line := range strings.Split(strings.TrimSpace(d.DispatcherLog), "\n") {
+			for _, line := range strings.Split(strings.TrimSpace(d.OperatorLog), "\n") {
 				dispLines = append(dispLines, dim.Render("  "+line))
 			}
 		}
 		sections = append(sections, sep)
-		sections = append(sections, titleFg.Render(" Dispatcher (last run)"))
+		sections = append(sections, titleFg.Render(" Operator Log"))
 		sections = append(sections, strings.Join(dispLines, "\n"))
 	}
 
@@ -437,7 +437,7 @@ func (m Model) renderView(maxVisiblePods int) string {
 	if m.statusMsg != "" {
 		sections = append(sections, yellow.Render(" "+m.statusMsg))
 	}
-	sections = append(sections, dim.Render(" q: quit  n: dispatch  p: pause  d: dispatcher  e: errors  l: live  r: refresh  +/-: agents  1-6: copy /review"))
+	sections = append(sections, dim.Render(" q: quit  n: dispatch  p: pause  d: operator  e: errors  l: live  r: refresh  +/-: agents  1-6: copy /review"))
 
 	return strings.Join(sections, "\n")
 }
