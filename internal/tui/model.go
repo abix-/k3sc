@@ -50,7 +50,7 @@ func NewModel(gatherFn GatherFunc, dispatchFn DispatchFunc, maxSlots int, setMax
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+	return tea.Tick(15*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
 func (m Model) Init() tea.Cmd {
@@ -269,7 +269,7 @@ func (m Model) View() string {
 	if m.statusMsg != "" {
 		sections = append(sections, yellow.Render(" "+m.statusMsg))
 	}
-	sections = append(sections, dim.Render(" q: quit  |  n: dispatch  |  p: pause/resume  |  r: refresh  |  +/-: max agents  |  5s auto-refresh"))
+	sections = append(sections, dim.Render(" q: quit  |  n: dispatch  |  p: pause/resume  |  r: refresh  |  +/-: max agents  |  15s auto-refresh"))
 
 	return strings.Join(sections, "\n")
 }

@@ -129,39 +129,98 @@ func GetOpenPRs(ctx context.Context) ([]types.PullRequest, error) {
 	return result, nil
 }
 
-func GetWorkflowIssues(ctx context.Context) ([]types.Issue, error) {
-	seen := make(map[int]bool)
-	var all []types.Issue
-	for _, label := range []string{"needs-review", "needs-human", "claimed", "ready"} {
-		issues, err := GetIssuesByLabel(ctx, label)
-		if err != nil {
+// GetAllOpenIssues fetches all open issues in one API call and filters client-side.
+// This uses 1 API call instead of 4-5 separate label queries.
+func GetAllOpenIssues(ctx context.Context) ([]types.Issue, error) {
+	client := newClient(ctx)
+	opts := &gh.IssueListByRepoOptions{
+		State:       "open",
+		ListOptions: gh.ListOptions{PerPage: 100},
+	}
+
+	ghIssues, _, err := client.Issues.ListByRepo(ctx, types.RepoOwner, types.RepoName, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	workflowLabels := map[string]bool{
+		"claimed": true, "needs-human": true, "needs-review": true, "ready": true,
+	}
+
+	var result []types.Issue
+	for _, i := range ghIssues {
+		if i.IsPullRequest() {
 			continue
 		}
-		for _, i := range issues {
-			if !seen[i.Number] {
-				seen[i.Number] = true
-				all = append(all, i)
+		var labels []string
+		for _, l := range i.Labels {
+			labels = append(labels, l.GetName())
+		}
+
+		state := ""
+		for _, s := range []string{"claimed", "needs-human", "needs-review", "ready"} {
+			for _, l := range labels {
+				if l == s {
+					state = s
+					break
+				}
+			}
+			if state != "" {
+				break
 			}
 		}
+
+		// skip issues without workflow labels
+		hasWorkflow := false
+		for _, l := range labels {
+			if workflowLabels[l] {
+				hasWorkflow = true
+				break
+			}
+		}
+		if !hasWorkflow {
+			continue
+		}
+
+		owner := ""
+		for _, l := range labels {
+			if len(l) > 6 && (l[:7] == "claude-" || l[:6] == "codex-") {
+				owner = l
+				break
+			}
+		}
+
+		result = append(result, types.Issue{
+			Number: i.GetNumber(),
+			Title:  i.GetTitle(),
+			State:  state,
+			Owner:  owner,
+		})
 	}
-	sort.Slice(all, func(i, j int) bool { return all[i].Number < all[j].Number })
-	return all, nil
+
+	sort.Slice(result, func(i, j int) bool { return result[i].Number < result[j].Number })
+	return result, nil
+}
+
+func GetWorkflowIssues(ctx context.Context) ([]types.Issue, error) {
+	return GetAllOpenIssues(ctx)
 }
 
 func GetEligibleIssues(ctx context.Context) ([]types.Issue, error) {
-	review, _ := GetIssuesByLabel(ctx, "needs-review")
-	ready, _ := GetIssuesByLabel(ctx, "ready")
-
-	seen := make(map[int]bool)
-	var result []types.Issue
-	for _, i := range review {
-		seen[i.Number] = true
-		result = append(result, i)
+	all, err := GetAllOpenIssues(ctx)
+	if err != nil {
+		return nil, err
 	}
-	for _, i := range ready {
-		if !seen[i.Number] {
-			result = append(result, i)
+
+	// needs-review first (sorted ascending), then ready
+	var review, ready []types.Issue
+	for _, i := range all {
+		switch i.State {
+		case "needs-review":
+			review = append(review, i)
+		case "ready":
+			ready = append(ready, i)
 		}
 	}
-	return result, nil
+	return append(review, ready...), nil
 }
