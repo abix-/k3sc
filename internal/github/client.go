@@ -53,8 +53,8 @@ func parseIssueLabels(labels []*gh.Label) (state, owner string) {
 	}
 	for _, l := range labels {
 		name := l.GetName()
-		if strings.HasPrefix(name, "claude-") || strings.HasPrefix(name, "codex-") {
-			owner = name
+		if strings.HasPrefix(name, "owner:") {
+			owner = strings.TrimPrefix(name, "owner:")
 			break
 		}
 	}
