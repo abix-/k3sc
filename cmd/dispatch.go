@@ -119,6 +119,37 @@ func runDispatchInner() (string, error) {
 		return strings.Join(log, "\n") + "\n", nil
 	}
 
+	// orphan cleanup: find issues with owner labels but no active pod
+	owned, err := github.GetOwnedIssues(ctx)
+	if err != nil {
+		log = append(log, fmt.Sprintf("[dispatcher] orphan check error: %v", err))
+	} else if len(owned) > 0 {
+		activeSlots, err := k8s.GetActiveSlots(ctx, cs)
+		if err != nil {
+			log = append(log, fmt.Sprintf("[dispatcher] orphan slot check error: %v", err))
+		} else {
+			activeAgents := map[string]bool{}
+			for _, s := range activeSlots {
+				activeAgents[types.AgentName(s)] = true
+			}
+			for _, issue := range owned {
+				if activeAgents[issue.Owner] {
+					continue
+				}
+				// owner label present but no active pod -- orphan
+				returnLabel := "ready"
+				hasPR, err := github.HasOpenPR(ctx, issue.Repo, issue.Number)
+				if err == nil && hasPR {
+					returnLabel = "needs-review"
+				}
+				log = append(log, fmt.Sprintf("[dispatcher] orphan: %s#%d owned by %s but no active pod, returning to %s", issue.Repo.Name, issue.Number, issue.Owner, returnLabel))
+				if err := github.UnclaimIssue(ctx, issue.Repo, issue.Number, issue.Owner, returnLabel); err != nil {
+					log = append(log, fmt.Sprintf("  UNCLAIM ERROR: %v", err))
+				}
+			}
+		}
+	}
+
 	eligible, err := github.GetEligibleIssues(ctx)
 	if err != nil {
 		log = append(log, fmt.Sprintf("[dispatcher] github error: %v", err))

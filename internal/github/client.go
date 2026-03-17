@@ -53,8 +53,8 @@ func parseIssueLabels(labels []*gh.Label) (state, owner string) {
 	}
 	for _, l := range labels {
 		name := l.GetName()
-		if strings.HasPrefix(name, "owner:") {
-			owner = strings.TrimPrefix(name, "owner:")
+		if strings.HasPrefix(name, "claude-") || strings.HasPrefix(name, "codex-") {
+			owner = name
 			break
 		}
 	}
@@ -124,7 +124,8 @@ func GetAllOpenIssues(ctx context.Context) ([]types.Issue, error) {
 
 			hasWorkflow := false
 			for _, l := range i.Labels {
-				if workflowLabels[l.GetName()] {
+				name := l.GetName()
+				if workflowLabels[name] || strings.HasPrefix(name, "claude-") || strings.HasPrefix(name, "codex-") {
 					hasWorkflow = true
 					break
 				}
@@ -170,6 +171,51 @@ func ClaimIssue(ctx context.Context, repo types.Repo, issueNumber int, agentName
 	}
 
 	return nil
+}
+
+// GetOwnedIssues returns open issues that have a claude-* owner label but not needs-human.
+func GetOwnedIssues(ctx context.Context) ([]types.Issue, error) {
+	all, err := GetAllOpenIssues(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var result []types.Issue
+	for _, i := range all {
+		if i.Owner != "" && i.State != "needs-human" {
+			result = append(result, i)
+		}
+	}
+	return result, nil
+}
+
+// UnclaimIssue removes the owner label and claimed label, then adds returnLabel (ready or needs-review).
+func UnclaimIssue(ctx context.Context, repo types.Repo, issueNumber int, ownerLabel, returnLabel string) error {
+	client := newClient(ctx)
+	for _, label := range []string{ownerLabel, "claimed"} {
+		client.Issues.RemoveLabelForIssue(ctx, repo.Owner, repo.Name, issueNumber, label)
+	}
+	_, _, err := client.Issues.AddLabelsToIssue(ctx, repo.Owner, repo.Name, issueNumber, []string{returnLabel})
+	if err != nil {
+		return fmt.Errorf("add %s label: %w", returnLabel, err)
+	}
+	body := fmt.Sprintf("## Claude\n- Orphan cleanup: removed owner label `%s` (no active pod)\n- State: -> %s", ownerLabel, returnLabel)
+	_, _, err = client.Issues.CreateComment(ctx, repo.Owner, repo.Name, issueNumber, &gh.IssueComment{Body: &body})
+	return err
+}
+
+// HasOpenPR checks if there's an open PR for a given issue-N branch.
+func HasOpenPR(ctx context.Context, repo types.Repo, issueNumber int) (bool, error) {
+	client := newClient(ctx)
+	branch := fmt.Sprintf("issue-%d", issueNumber)
+	prs, _, err := client.PullRequests.List(ctx, repo.Owner, repo.Name, &gh.PullRequestListOptions{
+		State:       "open",
+		Head:        fmt.Sprintf("%s:%s", repo.Owner, branch),
+		ListOptions: gh.ListOptions{PerPage: 1},
+	})
+	if err != nil {
+		return false, err
+	}
+	return len(prs) > 0, nil
 }
 
 func GetWorkflowIssues(ctx context.Context) ([]types.Issue, error) {
