@@ -9,15 +9,23 @@ import (
 
 	"github.com/abix-/k3sc/internal/types"
 	gh "github.com/google/go-github/v68/github"
-	"golang.org/x/oauth2"
 )
 
-func newClient(ctx context.Context) *gh.Client {
+// newClientFn is the factory used by all exported functions. Override in tests.
+var newClientFn func(token string) *gh.Client = defaultNewClient
+
+func defaultNewClient(token string) *gh.Client {
+	if token == "" {
+		return gh.NewClient(nil)
+	}
+	return gh.NewClient(nil).WithAuthToken(token)
+}
+
+func resolveToken() string {
 	token := os.Getenv("GITHUB_TOKEN")
 	if token == "" {
 		token = os.Getenv("GH_TOKEN")
 	}
-	// fallback: read from token file (shared between Windows and k8s pods)
 	if token == "" {
 		for _, path := range []string{
 			"/home/claude/.gh-token",                // k8s pod (hostPath mount)
@@ -25,17 +33,15 @@ func newClient(ctx context.Context) *gh.Client {
 			os.Getenv("HOME") + "/.gh-token",        // Linux
 		} {
 			if b, err := os.ReadFile(path); err == nil {
-				token = strings.TrimSpace(string(b))
-				break
+				return strings.TrimSpace(string(b))
 			}
 		}
 	}
-	if token == "" {
-		return gh.NewClient(nil)
-	}
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-	tc := oauth2.NewClient(ctx, ts)
-	return gh.NewClient(tc)
+	return token
+}
+
+func newClient(_ context.Context) *gh.Client {
+	return newClientFn(resolveToken())
 }
 
 // parseIssueLabels extracts workflow state and owner from GitHub labels.
