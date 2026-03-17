@@ -21,16 +21,20 @@ var launchCmd = &cobra.Command{
 	RunE:  runLaunch,
 }
 
+const lockFile = ".claude-k3.lock"
+
 func runLaunch(cmd *cobra.Command, args []string) error {
 	base := `C:\code`
 	repoURL := "https://github.com/abix-/endless.git"
 
-	// find occupied slots by checking which endless-claude-N dirs have a claude process
-	occupied := map[int]bool{}
+	// find free slot: dir exists but no lockfile, or dir doesn't exist yet
 	entries, err := os.ReadDir(base)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", base, err)
 	}
+
+	existing := map[int]bool{}
+	locked := map[int]bool{}
 	for _, e := range entries {
 		if !e.IsDir() || !strings.HasPrefix(e.Name(), "endless-claude-") {
 			continue
@@ -40,25 +44,42 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			continue
 		}
-		// check if claude is running in this directory
-		out, _ := exec.Command("wmic", "process", "where",
-			fmt.Sprintf(`name='claude.exe' and commandline like '%%%s%%'`, e.Name()),
-			"get", "processid", "/format:list").Output()
-		if strings.Contains(string(out), "ProcessId=") {
-			occupied[n] = true
+		existing[n] = true
+		lock := filepath.Join(base, e.Name(), lockFile)
+		if _, err := os.Stat(lock); err == nil {
+			// lockfile exists -- check if the PID inside is still alive
+			data, _ := os.ReadFile(lock)
+			pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+			if pid > 0 {
+				out, _ := exec.Command("tasklist", "/FI",
+					fmt.Sprintf("PID eq %d", pid), "/NH").Output()
+				if strings.Contains(string(out), strconv.Itoa(pid)) {
+					locked[n] = true
+					continue
+				}
+			}
+			// stale lock -- remove it
+			os.Remove(lock)
 		}
 	}
 
-	// pick next free slot (1-based)
+	// pick lowest free slot: existing but unlocked first, then next new slot
 	slot := 0
 	for i := 1; i <= 20; i++ {
-		if !occupied[i] {
+		if existing[i] && !locked[i] {
 			slot = i
 			break
 		}
 	}
 	if slot == 0 {
-		return fmt.Errorf("no free slots (1-20)")
+		// no unlocked existing dir, pick next after highest
+		max := 0
+		for n := range existing {
+			if n > max {
+				max = n
+			}
+		}
+		slot = max + 1
 	}
 
 	dir := filepath.Join(base, fmt.Sprintf("endless-claude-%d", slot))
@@ -75,12 +96,28 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// launch claude interactively in that directory
+	// write lockfile with our PID (claude will inherit it)
+	lockPath := filepath.Join(dir, lockFile)
+
+	// launch claude interactively
 	fmt.Printf("launching claude in %s\n", dir)
 	c := exec.Command("claude")
 	c.Dir = dir
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
-	return c.Run()
+
+	if err := c.Start(); err != nil {
+		return err
+	}
+
+	// write claude's PID to lockfile
+	os.WriteFile(lockPath, []byte(strconv.Itoa(c.Process.Pid)), 0o644)
+
+	err = c.Wait()
+
+	// cleanup lock
+	os.Remove(lockPath)
+
+	return err
 }
