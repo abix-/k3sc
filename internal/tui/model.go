@@ -198,14 +198,11 @@ func (m Model) View() string {
 	agentBox := border.Render(titleFg.Render(agentTitle) + "\n" + strings.Join(agentLines, "\n"))
 	sections = append(sections, agentBox)
 
-	// -- help bar --
-	var helpLine string
+	// -- status + help bar --
 	if m.statusMsg != "" {
-		helpLine = yellow.Render(" " + m.statusMsg)
-	} else {
-		helpLine = dim.Render(" q: quit  |  n: dispatch now  |  r: refresh  |  refreshes every 5s")
+		sections = append(sections, yellow.Render(" "+m.statusMsg))
 	}
-	sections = append(sections, helpLine)
+	sections = append(sections, dim.Render(" q: quit  |  n: dispatch now  |  r: refresh  |  refreshes every 5s"))
 
 	return strings.Join(sections, "\n")
 }
