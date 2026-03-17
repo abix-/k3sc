@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -54,7 +55,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 	entries, _ := os.ReadDir(manifests)
 	for _, e := range entries {
-		if filepath.HasPrefix(e.Name(), "pvc-") {
+		if strings.HasPrefix(e.Name(), "pvc-") {
 			if err := runCmd("applying "+e.Name(), fmt.Sprintf("%s apply -f %s/%s", kubectl, manifests, e.Name())); err != nil {
 				return err
 			}
