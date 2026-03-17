@@ -23,7 +23,11 @@ spec:
                   type: integer
                 repoURL:
                   type: string
-              required: [repo, repoName, issueNumber, repoURL]
+                slot:
+                  type: integer
+                agent:
+                  type: string
+              required: [repo, repoName, issueNumber, repoURL, slot, agent]
             status:
               type: object
               properties:
