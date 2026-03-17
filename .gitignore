@@ -2,3 +2,9 @@
 secret-values.yaml
 *.key
 *.pem
+
+
+# Added by cargo
+
+/target
+target/
