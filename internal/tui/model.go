@@ -181,72 +181,35 @@ func (m Model) View() string {
 	if m.quitting || m.data == nil {
 		return ""
 	}
-
-	d := m.data
-	w := m.width
-	if w < 80 {
-		w = 120
-	}
 	h := m.height
 	if h < 20 {
 		h = 50
 	}
 
+	// try full output, then reduce agents until it fits
+	for maxPods := len(m.data.Pods); maxPods >= 0; maxPods-- {
+		result := m.renderView(maxPods)
+		lines := strings.Count(result, "\n") + 1
+		if lines <= h {
+			return result
+		}
+	}
+	return m.renderView(0)
+}
+
+func (m Model) renderView(maxVisiblePods int) string {
+	d := m.data
+	w := m.width
+	if w < 80 {
+		w = 120
+	}
+
 	running, completed, failed := countPhases(d.Pods)
+	maxLivePerAgent := 6
 
-	// height budget: each bordered box = 2 (border) + content lines
-	// fixed: cluster(3) + status(1) + help(1) = 5
-	fixedLines := 5
-	dispLines := 0
-	if m.showDispatch {
-		dispLines = min(len(strings.Split(strings.TrimSpace(d.DispatcherLog), "\n")), 4) + 2
-		if d.DispatcherLog == "" {
-			dispLines = 3
-		}
-	}
-	issueBudget := min(len(d.Issues), 10) + 3
-	if len(d.Issues) == 0 {
-		issueBudget = 3
-	}
-	prBudget := min(len(d.PRs), 6) + 3
-	if len(d.PRs) == 0 {
-		prBudget = 3
-	}
-	liveLogCount := len(d.LiveLogs)
-	statusLine := 0
-	if m.statusMsg != "" {
-		statusLine = 1
-	}
-
-	usedByFixed := fixedLines + dispLines + issueBudget + prBudget + statusLine
-	remaining := h - usedByFixed
-
-	// split remaining between agents and live output
-	maxLiveLines := 0
-	if liveLogCount > 0 {
-		for _, ll := range d.LiveLogs {
-			maxLiveLines += len(ll.Lines) + 1 // lines + agent header
-		}
-		maxLiveLines += 2 // border
-	}
-
-	agentBudget := remaining
-	liveBudget := 0
-	if liveLogCount > 0 {
-		// give live output up to 1/3 of remaining, rest to agents
-		liveBudget = min(remaining/3, maxLiveLines)
-		agentBudget = remaining - liveBudget
-	}
-	agentBudget = max(agentBudget, 5)
-	maxVisiblePods := max(agentBudget-3, 1) // subtract border + header
-
-	border := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("8")).
-		Width(w - 2)
-
-	titleFg := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	titleFg := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+	sep := dim.Render(strings.Repeat("-", w))
 	green := lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
 	red := lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	yellow := lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
@@ -262,8 +225,7 @@ func (m Model) View() string {
 	}
 	clusterContent := fmt.Sprintf(" Node: %s %s  |  Agents: %d running, %d completed  |  Max slots: %d%s",
 		d.NodeName, d.NodeVersion, running, completed, m.maxSlots, pauseStr)
-	clusterBox := border.Render(titleFg.Render(" Cluster") + "\n" + clusterContent)
-	sections = append(sections, clusterBox)
+	sections = append(sections, titleFg.Render(" Cluster")+" "+clusterContent)
 
 	// -- dispatcher (toggle with d) --
 	if m.showDispatch {
@@ -275,8 +237,9 @@ func (m Model) View() string {
 				dispLines = append(dispLines, dim.Render("  "+line))
 			}
 		}
-		dispBox := border.Render(titleFg.Render(" Dispatcher (last run)") + "\n" + strings.Join(dispLines, "\n"))
-		sections = append(sections, dispBox)
+		sections = append(sections, sep)
+		sections = append(sections, titleFg.Render(" Dispatcher (last run)"))
+		sections = append(sections, strings.Join(dispLines, "\n"))
 	}
 
 	// -- issues --
@@ -302,19 +265,18 @@ func (m Model) View() string {
 			}
 		}
 	}
-	issueBox := border.Render(titleFg.Render(" GitHub Issues") + "\n" + strings.Join(issueLines, "\n"))
-	sections = append(sections, issueBox)
+	sections = append(sections, sep)
+	sections = append(sections, titleFg.Render(" GitHub Issues"))
+	sections = append(sections, strings.Join(issueLines, "\n"))
 
-	// -- agents (capped to fit screen) --
+	// -- agents --
 	var agentLines []string
 	if len(d.Pods) == 0 {
 		agentLines = append(agentLines, dim.Render("  (no agent pods)"))
 	} else {
 		agentLines = append(agentLines, titleFg.Render(fmt.Sprintf(" %-7s %-10s %-11s %-16s %-10s Last Output", "Issue", "Agent", "Status", "Started", "Duration")))
-		// show running pods first, then most recent completed, truncate oldest
 		visiblePods := d.Pods
 		if len(visiblePods) > maxVisiblePods {
-			// keep all running, truncate oldest completed
 			var runPods, donePods []types.AgentPod
 			for _, p := range visiblePods {
 				if p.Phase == types.PhaseRunning || p.Phase == types.PhasePending {
@@ -328,7 +290,7 @@ func (m Model) View() string {
 				keep = 0
 			}
 			if len(donePods) > keep {
-				donePods = donePods[len(donePods)-keep:] // keep newest
+				donePods = donePods[len(donePods)-keep:]
 			}
 			visiblePods = append(runPods, donePods...)
 		}
@@ -350,27 +312,26 @@ func (m Model) View() string {
 		}
 	}
 	agentTitle := fmt.Sprintf(" Agents (%d running, %d completed, %d failed)", running, completed, failed)
-	agentBox := border.Render(titleFg.Render(agentTitle) + "\n" + strings.Join(agentLines, "\n"))
-	sections = append(sections, agentBox)
+	sections = append(sections, sep)
+	sections = append(sections, titleFg.Render(agentTitle))
+	sections = append(sections, strings.Join(agentLines, "\n"))
 
 	// -- live output (only if agents are running, capped to budget) --
-	if m.showLive && len(d.LiveLogs) > 0 && liveBudget > 2 {
-		maxContentLines := liveBudget - 2 // border
+	if m.showLive && len(d.LiveLogs) > 0 {
 		var liveLines []string
 		for _, ll := range d.LiveLogs {
-			if len(liveLines) >= maxContentLines {
-				break
-			}
 			liveLines = append(liveLines, titleFg.Render(fmt.Sprintf(" -- %s (issue #%d) --", ll.Agent, ll.Issue)))
-			for _, line := range ll.Lines {
-				if len(liveLines) >= maxContentLines {
-					break
-				}
+			visibleLogLines := ll.Lines
+			if len(visibleLogLines) > maxLivePerAgent {
+				visibleLogLines = visibleLogLines[len(visibleLogLines)-maxLivePerAgent:]
+			}
+			for _, line := range visibleLogLines {
 				liveLines = append(liveLines, green.Render("  "+truncate(line, w-6)))
 			}
 		}
-		liveBox := border.Render(titleFg.Render(" Live Output") + "\n" + strings.Join(liveLines, "\n"))
-		sections = append(sections, liveBox)
+		sections = append(sections, sep)
+		sections = append(sections, titleFg.Render(" Live Output"))
+		sections = append(sections, strings.Join(liveLines, "\n"))
 	}
 
 	// -- pull requests --
@@ -398,8 +359,9 @@ func (m Model) View() string {
 			prLines = append(prLines, cyan.Render(line))
 		}
 	}
-	prBox := border.Render(titleFg.Render(" Pull Requests") + "\n" + strings.Join(prLines, "\n"))
-	sections = append(sections, prBox)
+	sections = append(sections, sep)
+	sections = append(sections, titleFg.Render(" Pull Requests"))
+	sections = append(sections, strings.Join(prLines, "\n"))
 
 	// -- status + help --
 	if m.statusMsg != "" {
