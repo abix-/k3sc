@@ -3,10 +3,9 @@ set -euo pipefail
 
 ISSUE_NUMBER="${ISSUE_NUMBER:?ISSUE_NUMBER env var required}"
 AGENT_SLOT="${AGENT_SLOT:?AGENT_SLOT env var required}"
+SLOT_LETTER="${SLOT_LETTER:?SLOT_LETTER env var required}"
 REPO_URL="${REPO_URL:-https://github.com/abix-/endless.git}"
 
-# agent identity from slot (1=a, 2=b, ..., 26=z)
-SLOT_LETTER=$(printf "\\x$(printf '%02x' $((AGENT_SLOT + 96)))")
 AGENT_ID="claude-${SLOT_LETTER}"
 REPO_NAME=$(basename "${REPO_URL}" .git)
 WORKSPACE="/workspaces/${REPO_NAME}-claude-${SLOT_LETTER}"

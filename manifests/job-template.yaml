@@ -1,5 +1,5 @@
 # Template used by dispatcher to create Jobs.
-# __ISSUE_NUMBER__, __AGENT_SLOT__, __REPO_URL__, and __REPO_NAME__ are replaced at creation time.
+# __ISSUE_NUMBER__, __AGENT_SLOT__, __SLOT_LETTER__, __REPO_URL__, and __REPO_NAME__ are replaced at creation time.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -32,6 +32,8 @@ spec:
               value: "__ISSUE_NUMBER__"
             - name: AGENT_SLOT
               value: "__AGENT_SLOT__"
+            - name: SLOT_LETTER
+              value: "__SLOT_LETTER__"
             - name: REPO_URL
               value: "__REPO_URL__"
             - name: CLAUDE_CODE_OAUTH_TOKEN

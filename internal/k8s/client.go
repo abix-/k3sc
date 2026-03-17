@@ -495,18 +495,26 @@ func FindPodForIssue(ctx context.Context, cs *kubernetes.Clientset, issue int) (
 	return pods.Items[len(pods.Items)-1].Name, nil
 }
 
-func CreateJobFromTemplate(ctx context.Context, cs *kubernetes.Clientset, template string, issue, slot int, repoURL string) (string, error) {
-	timestamp := time.Now().Unix()
-	manifest := strings.ReplaceAll(template, "__ISSUE_NUMBER__", strconv.Itoa(issue))
-	manifest = strings.ReplaceAll(manifest, "__AGENT_SLOT__", strconv.Itoa(slot))
-	manifest = strings.ReplaceAll(manifest, "__REPO_URL__", repoURL)
-	// extract repo name from clone URL (e.g. "https://github.com/abix-/endless.git" -> "endless")
+// applyTemplateSubstitutions replaces all __PLACEHOLDER__ tokens in the template.
+// Extracted as a standalone function so it can be unit-tested without a k8s client.
+func applyTemplateSubstitutions(tmpl string, issue, slot int, repoURL string) string {
 	repoName := repoURL
 	if idx := strings.LastIndex(repoName, "/"); idx >= 0 {
 		repoName = repoName[idx+1:]
 	}
 	repoName = strings.TrimSuffix(repoName, ".git")
-	manifest = strings.ReplaceAll(manifest, "__REPO_NAME__", repoName)
+
+	m := strings.ReplaceAll(tmpl, "__ISSUE_NUMBER__", strconv.Itoa(issue))
+	m = strings.ReplaceAll(m, "__AGENT_SLOT__", strconv.Itoa(slot))
+	m = strings.ReplaceAll(m, "__SLOT_LETTER__", types.SlotLetter(slot))
+	m = strings.ReplaceAll(m, "__REPO_URL__", repoURL)
+	m = strings.ReplaceAll(m, "__REPO_NAME__", repoName)
+	return m
+}
+
+func CreateJobFromTemplate(ctx context.Context, cs *kubernetes.Clientset, template string, issue, slot int, repoURL string) (string, error) {
+	timestamp := time.Now().Unix()
+	manifest := applyTemplateSubstitutions(template, issue, slot, repoURL)
 	manifest = strings.Replace(manifest,
 		fmt.Sprintf(`name: "claude-issue-%d"`, issue),
 		fmt.Sprintf(`name: "claude-issue-%d-%d"`, issue, timestamp),

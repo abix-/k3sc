@@ -1,6 +1,7 @@
 package k8s
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -51,7 +52,7 @@ func TestFindRecentUsageLimitPodFromLogsIgnoresOldAndHealthyPods(t *testing.T) {
 
 func TestParseUsageLimitResetTimeSameDay(t *testing.T) {
 	now := time.Date(2026, time.March, 17, 16, 6, 0, 0, time.UTC)
-	resetAt, ok := ParseUsageLimitResetTime(now, "You're out of extra usage · resets 5pm (UTC)")
+	resetAt, ok := ParseUsageLimitResetTime(now, "You're out of extra usage -- resets 5pm (UTC)")
 	if !ok {
 		t.Fatal("ParseUsageLimitResetTime() = not ok, want ok")
 	}
@@ -63,12 +64,55 @@ func TestParseUsageLimitResetTimeSameDay(t *testing.T) {
 
 func TestParseUsageLimitResetTimeRollsToNextDay(t *testing.T) {
 	now := time.Date(2026, time.March, 17, 18, 0, 0, 0, time.UTC)
-	resetAt, ok := ParseUsageLimitResetTime(now, "You're out of extra usage · resets 5pm (UTC)")
+	resetAt, ok := ParseUsageLimitResetTime(now, "You're out of extra usage -- resets 5pm (UTC)")
 	if !ok {
 		t.Fatal("ParseUsageLimitResetTime() = not ok, want ok")
 	}
 	want := time.Date(2026, time.March, 18, 17, 0, 0, 0, time.UTC)
 	if !resetAt.Equal(want) {
 		t.Fatalf("ParseUsageLimitResetTime() = %s, want %s", resetAt, want)
+	}
+}
+
+func TestCreateJobFromTemplateSlotLetter(t *testing.T) {
+	template := `apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "claude-issue-__ISSUE_NUMBER__"
+  namespace: claude-agents
+spec:
+  template:
+    spec:
+      containers:
+        - name: claude-agent
+          env:
+            - name: AGENT_SLOT
+              value: "__AGENT_SLOT__"
+            - name: SLOT_LETTER
+              value: "__SLOT_LETTER__"
+            - name: REPO_URL
+              value: "__REPO_URL__"
+            - name: ISSUE_NUMBER
+              value: "__ISSUE_NUMBER__"
+`
+	cases := []struct {
+		slot   int
+		letter string
+	}{
+		{1, "a"},
+		{2, "b"},
+		{3, "c"},
+		{26, "z"},
+	}
+
+	for _, tc := range cases {
+		result := applyTemplateSubstitutions(template, 42, tc.slot, "https://github.com/abix-/endless.git")
+		want := `value: "` + tc.letter + `"`
+		if !strings.Contains(result, want) {
+			t.Errorf("slot %d: result does not contain %q\ngot:\n%s", tc.slot, want, result)
+		}
+		if strings.Contains(result, "__SLOT_LETTER__") {
+			t.Errorf("slot %d: result still contains unreplaced __SLOT_LETTER__ placeholder", tc.slot)
+		}
 	}
 }
