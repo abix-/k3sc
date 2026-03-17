@@ -173,7 +173,17 @@ func ClaimIssue(ctx context.Context, repo types.Repo, issueNumber int, agentName
 	return nil
 }
 
-// GetOwnedIssues returns open issues that have a claude-* owner label but not needs-human.
+// isK3sAgent returns true if the owner label is a k3s letter-based agent (claude-a through claude-z).
+// Windows agents use numbers (claude-1, claude-2) and should not be touched by the dispatcher.
+func isK3sAgent(owner string) bool {
+	if !strings.HasPrefix(owner, "claude-") {
+		return false
+	}
+	suffix := strings.TrimPrefix(owner, "claude-")
+	return len(suffix) == 1 && suffix[0] >= 'a' && suffix[0] <= 'z'
+}
+
+// GetOwnedIssues returns open issues owned by k3s agents (letter-based) that are not needs-human.
 func GetOwnedIssues(ctx context.Context) ([]types.Issue, error) {
 	all, err := GetAllOpenIssues(ctx)
 	if err != nil {
@@ -181,7 +191,7 @@ func GetOwnedIssues(ctx context.Context) ([]types.Issue, error) {
 	}
 	var result []types.Issue
 	for _, i := range all {
-		if i.Owner != "" && i.State != "needs-human" {
+		if i.Owner != "" && i.State != "needs-human" && isK3sAgent(i.Owner) {
 			result = append(result, i)
 		}
 	}
