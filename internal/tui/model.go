@@ -247,10 +247,10 @@ func (m Model) renderView(maxVisiblePods int) string {
 	if len(d.Issues) == 0 {
 		issueLines = append(issueLines, dim.Render("  (no issues with workflow labels)"))
 	} else {
-		issueLines = append(issueLines, titleFg.Render(fmt.Sprintf(" %-7s %-14s %-10s Title", "Issue", "State", "Owner")))
+		issueLines = append(issueLines, titleFg.Render(fmt.Sprintf(" %-7s %-12s %-14s %-10s Title", "Issue", "Repo", "State", "Owner")))
 		maxIssues := min(len(d.Issues), 10)
 		for _, i := range d.Issues[:maxIssues] {
-			line := fmt.Sprintf(" %s %-14s %-10s %s", issueLink(i.Number), i.State, i.Owner, truncate(i.Title, w-40))
+			line := fmt.Sprintf(" %s %-12s %-14s %-10s %s", issueLink(i.Repo, i.Number), i.Repo.Name, i.State, i.Owner, truncate(i.Title, w-52))
 			switch i.State {
 			case "claimed":
 				issueLines = append(issueLines, yellow.Render(line))
@@ -295,12 +295,12 @@ func (m Model) renderView(maxVisiblePods int) string {
 			visiblePods = append(runPods, donePods...)
 		}
 		for _, pod := range visiblePods {
-			agent := fmt.Sprintf("claude-%d", pod.Slot+types.SlotOffset)
+			agent := types.AgentName(pod.Slot)
 			started := fmtTime(pod.Started)
 			duration := fmtDuration(pod.Started, pod.Finished)
 			tail := truncate(pod.LogTail, w-65)
 			line := fmt.Sprintf(" %s %-10s %-11s %-16s %-10s %s",
-				issueLink(pod.Issue), agent, pod.Phase.Display(), started, duration, tail)
+				issueLink(pod.Repo, pod.Issue), agent, pod.Phase.Display(), started, duration, tail)
 			switch pod.Phase {
 			case types.PhaseRunning, types.PhasePending:
 				agentLines = append(agentLines, green.Render(line))
@@ -339,23 +339,15 @@ func (m Model) renderView(maxVisiblePods int) string {
 	if len(d.PRs) == 0 {
 		prLines = append(prLines, dim.Render("  (no open pull requests)"))
 	} else {
-		prLines = append(prLines, titleFg.Render(fmt.Sprintf(" %-7s %-7s %-20s Title", "PR", "Issue", "Branch")))
+		prLines = append(prLines, titleFg.Render(fmt.Sprintf(" %-7s %-12s %-7s %-20s Title", "PR", "Repo", "Issue", "Branch")))
 		maxPRs := min(len(d.PRs), 6)
 		for _, pr := range d.PRs[:maxPRs] {
-			prLink := func() string {
-				url := fmt.Sprintf("https://github.com/%s/%s/pull/%d", types.RepoOwner, types.RepoName, pr.Number)
-				text := fmt.Sprintf("#%d", pr.Number)
-				l := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, text)
-				if len(text) < 7 {
-					l += strings.Repeat(" ", 7-len(text))
-				}
-				return l
-			}()
+			pl := prLink(pr.Repo, pr.Number)
 			issueRef := "       "
 			if pr.Issue > 0 {
-				issueRef = issueLink(pr.Issue)
+				issueRef = issueLink(pr.Repo, pr.Issue)
 			}
-			line := fmt.Sprintf(" %s %-7s %-20s %s", prLink, issueRef, truncate(pr.Branch, 20), truncate(pr.Title, w-45))
+			line := fmt.Sprintf(" %s %-12s %-7s %-20s %s", pl, pr.Repo.Name, issueRef, truncate(pr.Branch, 20), truncate(pr.Title, w-57))
 			prLines = append(prLines, cyan.Render(line))
 		}
 	}
@@ -405,8 +397,18 @@ func countPhases(pods []types.AgentPod) (running, completed, failed int) {
 	return
 }
 
-func issueLink(number int) string {
-	url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", types.RepoOwner, types.RepoName, number)
+func issueLink(repo types.Repo, number int) string {
+	url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", repo.Owner, repo.Name, number)
+	text := fmt.Sprintf("#%d", number)
+	link := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, text)
+	if len(text) < 7 {
+		link += strings.Repeat(" ", 7-len(text))
+	}
+	return link
+}
+
+func prLink(repo types.Repo, number int) string {
+	url := fmt.Sprintf("https://github.com/%s/%s/pull/%d", repo.Owner, repo.Name, number)
 	text := fmt.Sprintf("#%d", number)
 	link := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, text)
 	if len(text) < 7 {

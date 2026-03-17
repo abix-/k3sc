@@ -1,5 +1,5 @@
-# Template used by dispatcher.sh to create Jobs.
-# __ISSUE_NUMBER__ and __AGENT_SLOT__ are replaced at creation time.
+# Template used by dispatcher to create Jobs.
+# __ISSUE_NUMBER__, __AGENT_SLOT__, __REPO_URL__, and __REPO_NAME__ are replaced at creation time.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -9,6 +9,7 @@ metadata:
     app: claude-agent
     issue-number: "__ISSUE_NUMBER__"
     agent-slot: "__AGENT_SLOT__"
+    repo: "__REPO_NAME__"
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 3600
@@ -19,6 +20,7 @@ spec:
         app: claude-agent
         issue-number: "__ISSUE_NUMBER__"
         agent-slot: "__AGENT_SLOT__"
+        repo: "__REPO_NAME__"
     spec:
       restartPolicy: Never
       containers:
@@ -30,6 +32,8 @@ spec:
               value: "__ISSUE_NUMBER__"
             - name: AGENT_SLOT
               value: "__AGENT_SLOT__"
+            - name: REPO_URL
+              value: "__REPO_URL__"
             - name: CLAUDE_CODE_OAUTH_TOKEN
               valueFrom:
                 secretKeyRef:

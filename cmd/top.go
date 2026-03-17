@@ -178,9 +178,9 @@ func printDashboard(d *dashboard) {
 	if len(d.issues) == 0 {
 		fmt.Println("  (no issues with workflow labels)")
 	} else {
-		fmt.Printf("%-7s %-14s %-10s Title\n", "Issue", "State", "Owner")
+		fmt.Printf("%-7s %-12s %-14s %-10s Title\n", "Issue", "Repo", "State", "Owner")
 		for _, i := range d.issues {
-			fmt.Printf("%s %-14s %-10s %s\n", issueLink(i.Number), i.State, i.Owner, i.Title)
+			fmt.Printf("%s %-12s %-14s %-10s %s\n", issueLink(i.Repo, i.Number), i.Repo.Name, i.State, i.Owner, i.Title)
 		}
 	}
 	fmt.Println()
@@ -193,9 +193,9 @@ func printDashboard(d *dashboard) {
 	} else {
 		fmt.Printf("%-7s %-10s %-11s %-16s %-10s Last Output\n", "Issue", "Agent", "Status", "Started", "Duration")
 		for _, pod := range d.pods {
-			agent := fmt.Sprintf("claude-%d", pod.Slot+types.SlotOffset)
+			agent := types.AgentName(pod.Slot)
 			fmt.Printf("%s %-10s %-11s %-16s %-10s %s\n",
-				issueLink(pod.Issue), agent, pod.Phase.Display(),
+				issueLink(pod.Repo, pod.Issue), agent, pod.Phase.Display(),
 				fmtTime(pod.Started), fmtDuration(pod.Started, pod.Finished),
 				pod.LogTail)
 		}
@@ -203,8 +203,8 @@ func printDashboard(d *dashboard) {
 	fmt.Println()
 }
 
-func issueLink(number int) string {
-	url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", types.RepoOwner, types.RepoName, number)
+func issueLink(repo types.Repo, number int) string {
+	url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", repo.Owner, repo.Name, number)
 	text := fmt.Sprintf("#%d", number)
 	link := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, text)
 	if len(text) < 7 {
@@ -328,7 +328,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 					liveMu.Lock()
 					liveLogs = append(liveLogs, tui.LiveLog{
 						Issue: pods[idx].Issue,
-						Agent: fmt.Sprintf("claude-%d", pods[idx].Slot+types.SlotOffset),
+						Agent: types.AgentName(pods[idx].Slot),
 						Lines: lines,
 					})
 					liveMu.Unlock()

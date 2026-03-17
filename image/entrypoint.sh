@@ -5,10 +5,11 @@ ISSUE_NUMBER="${ISSUE_NUMBER:?ISSUE_NUMBER env var required}"
 AGENT_SLOT="${AGENT_SLOT:?AGENT_SLOT env var required}"
 REPO_URL="${REPO_URL:-https://github.com/abix-/endless.git}"
 
-# agent identity from slot (6-10 reserved for k8s)
-K8S_SLOT=$((AGENT_SLOT + 5))
-AGENT_ID="claude-${K8S_SLOT}"
-WORKSPACE="/workspaces/endless-claude-${K8S_SLOT}"
+# agent identity from slot (1=a, 2=b, ..., 26=z)
+SLOT_LETTER=$(printf "\\x$(printf '%02x' $((AGENT_SLOT + 96)))")
+AGENT_ID="claude-${SLOT_LETTER}"
+REPO_NAME=$(basename "${REPO_URL}" .git)
+WORKSPACE="/workspaces/${REPO_NAME}-claude-${SLOT_LETTER}"
 
 export CARGO_TARGET_DIR="/cargo-target"
 export CARGO_HOME="/cargo-home"
@@ -28,7 +29,7 @@ export PATH="${CARGO_HOME}/bin:${PATH}"
 # trust all workspaces (PVC may have been created by different uid)
 git config --global --add safe.directory '*'
 
-echo "[entrypoint] agent=${AGENT_ID} issue=${ISSUE_NUMBER}"
+echo "[entrypoint] agent=${AGENT_ID} repo=${REPO_NAME} issue=${ISSUE_NUMBER}"
 
 # set up workspace: clone once, fetch on reuse
 if [ ! -d "${WORKSPACE}/.git" ]; then

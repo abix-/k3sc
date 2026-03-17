@@ -83,7 +83,7 @@ func runDispatchInner() (string, error) {
 
 	var nums []string
 	for _, i := range eligible {
-		nums = append(nums, strconv.Itoa(i.Number))
+		nums = append(nums, fmt.Sprintf("%s#%d", i.Repo.Name, i.Number))
 	}
 	log = append(log, fmt.Sprintf("[dispatcher] eligible issues: %s", strings.Join(nums, " ")))
 
@@ -134,8 +134,8 @@ func runDispatchInner() (string, error) {
 			break
 		}
 
-		log = append(log, fmt.Sprintf("[dispatcher] creating job for issue %d in slot %d", issue.Number, slot))
-		name, err := k8s.CreateJobFromTemplate(ctx, cs, string(template), issue.Number, slot)
+		log = append(log, fmt.Sprintf("[dispatcher] creating job for %s/%s#%d in slot %d", issue.Repo.Owner, issue.Repo.Name, issue.Number, slot))
+		name, err := k8s.CreateJobFromTemplate(ctx, cs, string(template), issue.Number, slot, issue.Repo.CloneURL())
 		if err != nil {
 			log = append(log, fmt.Sprintf("  ERROR: %v", err))
 		} else {

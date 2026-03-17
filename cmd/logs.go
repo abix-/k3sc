@@ -70,7 +70,7 @@ func runLogs(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("%-7s %-10s %-11s %-16s Last Output\n", "Issue", "Agent", "Status", "Started")
 	for _, pod := range pods {
-		agent := fmt.Sprintf("claude-%d", pod.Slot+types.SlotOffset)
+		agent := types.AgentName(pod.Slot)
 		tail, _ := k8s.GetPodLogTail(ctx, cs, pod.Name, 20)
 		fmt.Printf("#%-6d %-10s %-11s %-16s %s\n",
 			pod.Issue, agent, pod.Phase.Display(),
