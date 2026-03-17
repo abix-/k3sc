@@ -29,6 +29,9 @@ func NewClient() (*kubernetes.Clientset, error) {
 			return nil, fmt.Errorf("k8s config: %w", err)
 		}
 	}
+	// increase QPS to avoid client-side throttling with many log requests
+	config.QPS = 50
+	config.Burst = 100
 	return kubernetes.NewForConfig(config)
 }
 
