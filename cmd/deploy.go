@@ -29,16 +29,28 @@ func runCmd(desc, cmd string) error {
 	return c.Run()
 }
 
-func runDeploy(cmd *cobra.Command, args []string) error {
-	// find repo root (where go.mod lives)
-	ex, _ := os.Executable()
-	repoRoot := filepath.Dir(ex)
-	// fallback: check common locations
-	for _, candidate := range []string{repoRoot, "/mnt/c/code/k3sc", "."} {
-		if _, err := os.Stat(filepath.Join(candidate, "manifests")); err == nil {
-			repoRoot = candidate
+func findRepoRoot() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
 			break
 		}
+		dir = parent
+	}
+	return "", fmt.Errorf("repo root not found: no go.mod in cwd or any parent directory")
+}
+
+func runDeploy(cmd *cobra.Command, args []string) error {
+	repoRoot, err := findRepoRoot()
+	if err != nil {
+		return err
 	}
 
 	imageDir := filepath.Join(repoRoot, "image")
