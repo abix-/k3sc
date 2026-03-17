@@ -52,10 +52,7 @@ func scan(ctx context.Context, c client.Client, namespace string, logger interfa
 	existingSet := map[string]bool{}
 	for _, t := range existing.Items {
 		key := fmt.Sprintf("%s-%d", t.Spec.RepoName, t.Spec.IssueNumber)
-		// skip completed/blocked tasks so the same issue can be re-dispatched if needed
-		if t.Status.Phase != TaskPhaseSucceeded && t.Status.Phase != TaskPhaseBlocked {
-			existingSet[key] = true
-		}
+		existingSet[key] = true
 	}
 
 	for _, issue := range eligible {

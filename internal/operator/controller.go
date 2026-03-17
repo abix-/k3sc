@@ -214,7 +214,15 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *ClaudeTask, succ
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
-	// succeeded -- unclaim (agent should have already transitioned labels, but clean up just in case)
+	// succeeded -- transition labels: remove owner, add needs-review (if PR) or needs-human
+	repo := dispatch.RepoFromString(task.Spec.Repo)
+	returnLabel := "needs-human"
+	hasPR, _ := github.HasOpenPR(ctx, repo, task.Spec.IssueNumber)
+	if hasPR {
+		returnLabel = "needs-review"
+	}
+	github.UnclaimIssue(ctx, repo, task.Spec.IssueNumber, task.Status.Agent, returnLabel)
+	logger.Info("success cleanup", "issue", task.Spec.IssueNumber, "label", returnLabel)
 	return ctrl.Result{}, r.Status().Update(ctx, task)
 }
 
