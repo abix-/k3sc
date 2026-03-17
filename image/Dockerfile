@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates git python3 build-essential pkg-config \
+    curl ca-certificates git build-essential pkg-config \
     libssl-dev unzip jq && \
     rm -rf /var/lib/apt/lists/*
 
