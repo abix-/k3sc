@@ -265,7 +265,13 @@ func countPhases(pods []types.AgentPod) (running, completed, failed int) {
 
 func issueLink(number int) string {
 	url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", types.RepoOwner, types.RepoName, number)
-	return fmt.Sprintf("\033]8;;%s\033\\#%-6d\033]8;;\033\\", url, number)
+	text := fmt.Sprintf("#%d", number)
+	link := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, text)
+	// pad to 7 chars total (# + up to 6 digits) outside the escape
+	if len(text) < 7 {
+		link += strings.Repeat(" ", 7-len(text))
+	}
+	return link
 }
 
 func truncate(s string, max int) string {

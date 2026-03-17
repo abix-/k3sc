@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -191,7 +192,12 @@ func printDashboard(d *dashboard) {
 
 func issueLink(number int) string {
 	url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", types.RepoOwner, types.RepoName, number)
-	return fmt.Sprintf("\033]8;;%s\033\\#%-6d\033]8;;\033\\", url, number)
+	text := fmt.Sprintf("#%d", number)
+	link := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, text)
+	if len(text) < 7 {
+		link += strings.Repeat(" ", 7-len(text))
+	}
+	return link
 }
 
 func countPhases(pods []types.AgentPod) (running, completed, failed int) {
