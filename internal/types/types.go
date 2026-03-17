@@ -92,7 +92,7 @@ type TaskInfo struct {
 	Phase    string // Pending, Running, Succeeded, Failed, Blocked
 	Agent    string
 	Slot     int
-	Attempts int
+	NextAction string
 	Started  *time.Time
 	Finished *time.Time
 	LogTail  string

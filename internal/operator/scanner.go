@@ -49,18 +49,27 @@ func scan(ctx context.Context, c client.Client, namespace string) {
 		return
 	}
 
-	// only block issues that have an active (non-terminal) task
+	// track active tasks and failure counts per issue
 	activeIssues := map[string]bool{}
+	failCounts := map[string]int{}
 	for _, t := range existing.Items {
+		key := fmt.Sprintf("%s-%d", t.Spec.RepoName, t.Spec.IssueNumber)
 		if !IsTerminal(t.Status.Phase) && t.Status.Phase != "" {
-			key := fmt.Sprintf("%s-%d", t.Spec.RepoName, t.Spec.IssueNumber)
 			activeIssues[key] = true
+		}
+		if t.Status.Phase == TaskPhaseFailed {
+			failCounts[key]++
 		}
 	}
 
+	const maxFailures = 3
 	for _, issue := range eligible {
 		key := fmt.Sprintf("%s-%d", issue.Repo.Name, issue.Number)
 		if activeIssues[key] {
+			continue
+		}
+		if failCounts[key] >= maxFailures {
+			fmt.Printf("[scanner] %s blocked after %d failures\n", key, failCounts[key])
 			continue
 		}
 

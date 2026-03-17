@@ -74,7 +74,7 @@ type claudeTaskList struct {
 			Phase      string `json:"phase"`
 			Agent      string `json:"agent"`
 			Slot       int    `json:"slot"`
-			Attempts   int    `json:"attempts"`
+			NextAction string `json:"nextAction"`
 			StartedAt  string `json:"startedAt"`
 			FinishedAt string `json:"finishedAt"`
 		} `json:"status"`
@@ -117,7 +117,7 @@ func GetClaudeTasks(ctx context.Context) ([]types.TaskInfo, error) {
 			Phase:    item.Status.Phase,
 			Agent:    item.Status.Agent,
 			Slot:     item.Status.Slot,
-			Attempts: item.Status.Attempts,
+			NextAction: item.Status.NextAction,
 		}
 		if item.Status.StartedAt != "" {
 			if ts, err := time.Parse(time.RFC3339, item.Status.StartedAt); err == nil {

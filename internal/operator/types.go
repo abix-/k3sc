@@ -53,12 +53,11 @@ func IsTerminal(phase TaskPhase) bool {
 }
 
 type ClaudeTaskStatus struct {
-	Phase      TaskPhase    `json:"phase,omitempty"`
-	Agent      string       `json:"agent,omitempty"`
-	Slot       int          `json:"slot,omitempty"`
-	JobName    string       `json:"jobName,omitempty"`
-	Attempts   int          `json:"attempts,omitempty"`
-	LastError  string       `json:"lastError,omitempty"`
+	Phase     TaskPhase    `json:"phase,omitempty"`
+	Agent     string       `json:"agent,omitempty"`
+	Slot      int          `json:"slot,omitempty"`
+	JobName   string       `json:"jobName,omitempty"`
+	LastError string       `json:"lastError,omitempty"`
 	Reported   bool         `json:"reported,omitempty"`   // result comment posted to github
 	LogTail    string       `json:"logTail,omitempty"`    // last meaningful output line
 	NextAction string       `json:"nextAction,omitempty"` // needs-review, needs-human

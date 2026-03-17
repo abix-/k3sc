@@ -351,7 +351,7 @@ func (m Model) renderView(maxVisiblePods int) string {
 				tBlocked++
 			}
 		}
-		taskLines = append(taskLines, titleFg.Render(fmt.Sprintf(" %-7s %-10s %-10s %-11s %-16s %-10s %-3s", "Issue", "Repo", "Agent", "Phase", "Started", "Duration", "Try")))
+		taskLines = append(taskLines, titleFg.Render(fmt.Sprintf(" %-7s %-10s %-10s %-11s %-16s %-10s %-13s", "Issue", "Repo", "Agent", "Phase", "Started", "Duration", "Next")))
 		maxTasks := len(d.Tasks)
 		if maxTasks > 10 {
 			maxTasks = 10
@@ -359,8 +359,8 @@ func (m Model) renderView(maxVisiblePods int) string {
 		for _, t := range d.Tasks[:maxTasks] {
 			started := format.FmtTime(t.Started)
 			duration := format.FmtDuration(t.Started, t.Finished)
-			line := fmt.Sprintf(" %-7s %-10s %-10s %-11s %-16s %-10s %d",
-				fmt.Sprintf("#%d", t.Issue), t.Repo.Name, t.Agent, t.Phase, started, duration, t.Attempts)
+			line := fmt.Sprintf(" %-7s %-10s %-10s %-11s %-16s %-10s %s",
+				fmt.Sprintf("#%d", t.Issue), t.Repo.Name, t.Agent, t.Phase, started, duration, t.NextAction)
 			switch t.Phase {
 			case "Running", "Pending":
 				taskLines = append(taskLines, green.Render(line))

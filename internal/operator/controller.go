@@ -17,10 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-const (
-	MaxRetries   = 3
-	RequeueDelay = 10 * time.Second
-)
+const RequeueDelay = 10 * time.Second
 
 type Reconciler struct {
 	client.Client
@@ -43,12 +40,20 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return r.handleAssigned(ctx, &task)
 	case TaskPhaseRunning:
 		return r.handleRunning(ctx, &task)
-	case TaskPhaseSucceeded, TaskPhaseFailed:
-		return r.handleCompleted(ctx, &task)
+	case TaskPhaseSucceeded:
+		if !task.Status.Reported {
+			return r.handleCompleted(ctx, &task)
+		}
+	case TaskPhaseFailed:
+		if !task.Status.Reported {
+			return r.handleCompleted(ctx, &task)
+		}
 	case TaskPhaseBlocked:
-		logger.Info("task blocked", "issue", task.Spec.IssueNumber, "attempts", task.Status.Attempts)
-		return ctrl.Result{}, nil
+		// terminal
 	}
+
+	// terminal states with Reported=true -- nothing to do
+	logger.V(1).Info("task terminal", "issue", task.Spec.IssueNumber, "phase", task.Status.Phase)
 	return ctrl.Result{}, nil
 }
 
@@ -65,12 +70,11 @@ func (r *Reconciler) handlePending(ctx context.Context, task *ClaudeTask) (ctrl.
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	agentName := types.AgentName(slot)
 	task.Status.Phase = TaskPhaseAssigned
-	task.Status.Agent = agentName
+	task.Status.Agent = types.AgentName(slot)
 	task.Status.Slot = slot
 
-	logger.Info("assigned", "issue", task.Spec.IssueNumber, "agent", agentName, "slot", slot)
+	logger.Info("assigned", "issue", task.Spec.IssueNumber, "agent", task.Status.Agent, "slot", slot)
 	return ctrl.Result{Requeue: true}, r.Status().Update(ctx, task)
 }
 
@@ -78,13 +82,11 @@ func (r *Reconciler) handleAssigned(ctx context.Context, task *ClaudeTask) (ctrl
 	logger := log.FromContext(ctx)
 	repo := dispatch.RepoFromString(task.Spec.Repo)
 
-	// claim on github
 	if err := github.ClaimIssue(ctx, repo, task.Spec.IssueNumber, task.Status.Agent); err != nil {
 		logger.Error(err, "failed to claim issue", "issue", task.Spec.IssueNumber)
 		return ctrl.Result{RequeueAfter: RequeueDelay}, nil
 	}
 
-	// create k8s job
 	jobName, err := k8s.CreateJobFromTemplate(ctx, r.K8s, r.Template, task.Spec.IssueNumber, task.Status.Slot, task.Spec.RepoURL)
 	if err != nil {
 		logger.Error(err, "failed to create job", "issue", task.Spec.IssueNumber)
@@ -94,9 +96,7 @@ func (r *Reconciler) handleAssigned(ctx context.Context, task *ClaudeTask) (ctrl
 	now := metav1.Now()
 	task.Status.Phase = TaskPhaseRunning
 	task.Status.JobName = jobName
-	task.Status.Attempts++
 	task.Status.StartedAt = &now
-	task.Status.FinishedAt = nil
 
 	logger.Info("dispatched", "issue", task.Spec.IssueNumber, "agent", task.Status.Agent, "job", jobName)
 	return ctrl.Result{}, r.Status().Update(ctx, task)
@@ -113,11 +113,11 @@ func (r *Reconciler) handleRunning(ctx context.Context, task *ClaudeTask) (ctrl.
 	}
 
 	if len(jobs.Items) == 0 {
-		logger.Info("job disappeared, marking failed", "issue", task.Spec.IssueNumber)
 		now := metav1.Now()
 		task.Status.Phase = TaskPhaseFailed
 		task.Status.FinishedAt = &now
 		task.Status.LastError = "job disappeared"
+		logger.Info("job disappeared", "issue", task.Spec.IssueNumber)
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
@@ -143,45 +143,41 @@ func (r *Reconciler) handleRunning(ctx context.Context, task *ClaudeTask) (ctrl.
 		task.Status.FinishedAt = &now
 		task.Status.LastError = "pod failed"
 		r.captureLogTail(ctx, task)
-		logger.Info("task failed", "issue", task.Spec.IssueNumber, "attempts", task.Status.Attempts)
+		logger.Info("task failed", "issue", task.Spec.IssueNumber)
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
+// handleCompleted runs once: posts result comment, syncs labels, marks reported.
 func (r *Reconciler) handleCompleted(ctx context.Context, task *ClaudeTask) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	repo := dispatch.RepoFromString(task.Spec.Repo)
 	succeeded := task.Status.Phase == TaskPhaseSucceeded
 
-	// post result comment if not yet reported
-	if !task.Status.Reported {
-		status := "succeeded"
-		if !succeeded {
-			status = "failed"
-		}
-		duration := ""
-		if task.Status.StartedAt != nil && task.Status.FinishedAt != nil {
-			d := task.Status.FinishedAt.Sub(task.Status.StartedAt.Time)
-			duration = fmt.Sprintf(" (%dm %02ds)", int(d.Minutes()), int(d.Seconds())%60)
-		}
-
-		body := fmt.Sprintf("## k3sc operator\n- Agent: %s\n- Status: %s%s\n- Attempts: %d",
-			task.Status.Agent, status, duration, task.Status.Attempts)
-		if task.Status.LogTail != "" {
-			body += fmt.Sprintf("\n\n```\n%s\n```", task.Status.LogTail)
-		}
-		if task.Status.LastError != "" {
-			body += fmt.Sprintf("\n\nError: %s", task.Status.LastError)
-		}
-
-		github.PostComment(ctx, repo, task.Spec.IssueNumber, body)
-		task.Status.Reported = true
-		logger.Info("posted result comment", "issue", task.Spec.IssueNumber, "status", status)
+	// post result comment
+	status := "succeeded"
+	if !succeeded {
+		status = "failed"
+	}
+	duration := ""
+	if task.Status.StartedAt != nil && task.Status.FinishedAt != nil {
+		d := task.Status.FinishedAt.Sub(task.Status.StartedAt.Time)
+		duration = fmt.Sprintf(" (%dm %02ds)", int(d.Minutes()), int(d.Seconds())%60)
 	}
 
-	// determine next action
+	body := fmt.Sprintf("## k3sc operator\n- Agent: %s\n- Status: %s%s",
+		task.Status.Agent, status, duration)
+	if task.Status.LogTail != "" {
+		body += fmt.Sprintf("\n\n```\n%s\n```", task.Status.LogTail)
+	}
+	if task.Status.LastError != "" {
+		body += fmt.Sprintf("\n\nError: %s", task.Status.LastError)
+	}
+	github.PostComment(ctx, repo, task.Spec.IssueNumber, body)
+
+	// sync labels
 	if succeeded {
 		nextAction := "needs-human"
 		hasPR, _ := github.HasOpenPR(ctx, repo, task.Spec.IssueNumber)
@@ -190,29 +186,14 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *ClaudeTask) (ctr
 		}
 		task.Status.NextAction = nextAction
 		github.UnclaimIssue(ctx, repo, task.Spec.IssueNumber, task.Status.Agent, nextAction)
-		logger.Info("success cleanup", "issue", task.Spec.IssueNumber, "nextAction", nextAction)
-		return ctrl.Result{}, r.Status().Update(ctx, task)
+	} else {
+		// failed -- put back to ready so scanner can re-dispatch
+		task.Status.NextAction = "ready"
+		github.UnclaimIssue(ctx, repo, task.Spec.IssueNumber, task.Status.Agent, "ready")
 	}
 
-	// failed -- retry or block
-	if task.Status.Attempts < MaxRetries {
-		returnLabel := "ready"
-		hasPR, _ := github.HasOpenPR(ctx, repo, task.Spec.IssueNumber)
-		if hasPR {
-			returnLabel = "needs-review"
-		}
-		github.UnclaimIssue(ctx, repo, task.Spec.IssueNumber, task.Status.Agent, returnLabel)
-		task.Status.NextAction = "retry"
-		logger.Info("will retry via new task", "issue", task.Spec.IssueNumber, "attempt", task.Status.Attempts)
-		// don't reset this task -- scanner will create a new one when issue becomes eligible again
-		return ctrl.Result{}, r.Status().Update(ctx, task)
-	}
-
-	// max retries exhausted
-	github.UnclaimIssue(ctx, repo, task.Spec.IssueNumber, task.Status.Agent, "needs-human")
-	task.Status.Phase = TaskPhaseBlocked
-	task.Status.NextAction = "needs-human"
-	logger.Info("task blocked after max retries", "issue", task.Spec.IssueNumber)
+	task.Status.Reported = true
+	logger.Info("completed", "issue", task.Spec.IssueNumber, "status", status, "nextAction", task.Status.NextAction)
 	return ctrl.Result{}, r.Status().Update(ctx, task)
 }
 
