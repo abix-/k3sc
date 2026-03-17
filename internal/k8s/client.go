@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -180,7 +181,7 @@ func FollowLog(ctx context.Context, cs *kubernetes.Clientset, podName string) er
 	}
 	defer stream.Close()
 
-	_, err = io.Copy(io.Discard, stream) // TODO: write to stdout
+	_, err = io.Copy(os.Stdout, stream)
 	return err
 }
 
