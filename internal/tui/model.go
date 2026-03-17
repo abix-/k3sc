@@ -224,7 +224,6 @@ func (m Model) renderView(maxVisiblePods int) string {
 	}
 
 	running, completed, failed := format.CountPhases(d.Pods)
-	maxLivePerAgent := 6
 
 	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	titleFg := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
@@ -388,18 +387,17 @@ func (m Model) renderView(maxVisiblePods int) string {
 		sections = append(sections, strings.Join(taskLines, "\n"))
 	}
 
-	// -- live output (only if agents are running, capped to budget) --
+	// -- live output (only if agents are running, max 10 lines total) --
 	if m.showLive && len(d.LiveLogs) > 0 {
 		var liveLines []string
 		for _, ll := range d.LiveLogs {
 			liveLines = append(liveLines, titleFg.Render(fmt.Sprintf(" -- %s (issue #%d) --", ll.Agent, ll.Issue)))
-			visibleLogLines := ll.Lines
-			if len(visibleLogLines) > maxLivePerAgent {
-				visibleLogLines = visibleLogLines[len(visibleLogLines)-maxLivePerAgent:]
-			}
-			for _, line := range visibleLogLines {
+			for _, line := range ll.Lines {
 				liveLines = append(liveLines, green.Render("  "+format.Truncate(line, w-6)))
 			}
+		}
+		if len(liveLines) > 10 {
+			liveLines = liveLines[len(liveLines)-10:]
 		}
 		sections = append(sections, sep)
 		sections = append(sections, titleFg.Render(" Live Output"))
