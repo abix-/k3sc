@@ -293,7 +293,7 @@ func (m Model) renderView(maxVisiblePods int) string {
 	if len(d.Pods) == 0 {
 		agentLines = append(agentLines, dim.Render("  (no agent pods)"))
 	} else {
-		agentLines = append(agentLines, titleFg.Render(fmt.Sprintf(" %-7s %-10s %-11s %-16s %-10s Last Output", "Issue", "Agent", "Status", "Started", "Duration")))
+		agentLines = append(agentLines, titleFg.Render(fmt.Sprintf(" %-7s %-10s %-8s %-11s %-16s %-10s Last Output", "Issue", "Agent", "Repo", "Status", "Started", "Duration")))
 		visiblePods := d.Pods
 		if len(visiblePods) > maxVisiblePods {
 			var runPods, donePods []types.AgentPod
@@ -317,9 +317,9 @@ func (m Model) renderView(maxVisiblePods int) string {
 			agent := types.AgentName(pod.Slot)
 			started := format.FmtTime(pod.Started)
 			duration := format.FmtDuration(pod.Started, pod.Finished)
-			tail := format.Truncate(pod.LogTail, w-65)
-			line := fmt.Sprintf(" %s %-10s %-11s %-16s %-10s %s",
-				format.IssueLink(pod.Repo, pod.Issue), agent, pod.Phase.Display(), started, duration, tail)
+			tail := format.Truncate(pod.LogTail, w-74)
+			line := fmt.Sprintf(" %s %-10s %-8s %-11s %-16s %-10s %s",
+				format.IssueLink(pod.Repo, pod.Issue), agent, pod.Repo.Name, pod.Phase.Display(), started, duration, tail)
 			switch pod.Phase {
 			case types.PhaseRunning, types.PhasePending:
 				agentLines = append(agentLines, green.Render(line))
