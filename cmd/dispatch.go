@@ -3,12 +3,11 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/abix-/k3sc/internal/dispatch"
 	"github.com/abix-/k3sc/internal/github"
 	"github.com/abix-/k3sc/internal/k8s"
 	"github.com/abix-/k3sc/internal/types"
@@ -44,31 +43,7 @@ func runDispatchInner() (string, error) {
 	ctx := context.Background()
 	var log []string
 
-	maxSlots := 5
-	if v := os.Getenv("MAX_SLOTS"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			maxSlots = n
-		}
-	}
-	templatePath := os.Getenv("JOB_TEMPLATE")
-	if templatePath == "" {
-		// find relative to executable, then cwd, then k8s pod path
-		exe, _ := os.Executable()
-		candidates := []string{
-			filepath.Join(filepath.Dir(exe), "manifests", "job-template.yaml"),
-			filepath.Join("manifests", "job-template.yaml"),
-			"/etc/dispatcher/job-template.yaml",
-		}
-		for _, c := range candidates {
-			if _, err := os.Stat(c); err == nil {
-				templatePath = c
-				break
-			}
-		}
-		if templatePath == "" {
-			templatePath = candidates[len(candidates)-1]
-		}
-	}
+	maxSlots := dispatch.MaxSlots()
 
 	loc, _ := time.LoadLocation("America/New_York")
 	now := time.Now().In(loc).Format("3:04 PM MST")
@@ -177,9 +152,9 @@ func runDispatchInner() (string, error) {
 	}
 	log = append(log, fmt.Sprintf("[dispatcher] active jobs: %d, slots in use: %s", len(activeSlots), strings.Join(slotStrs, " ")))
 
-	template, err := os.ReadFile(templatePath)
+	template, err := dispatch.LoadTemplate()
 	if err != nil {
-		return "", fmt.Errorf("read template %s: %w", templatePath, err)
+		return "", fmt.Errorf("load template: %w", err)
 	}
 
 	created := 0
@@ -189,20 +164,7 @@ func runDispatchInner() (string, error) {
 			break
 		}
 
-		slot := -1
-		for i := 1; i <= maxSlots; i++ {
-			found := false
-			for _, s := range activeSlots {
-				if s == i {
-					found = true
-					break
-				}
-			}
-			if !found {
-				slot = i
-				break
-			}
-		}
+		slot := dispatch.FindFreeSlotFromList(activeSlots, maxSlots)
 		if slot == -1 {
 			log = append(log, "[dispatcher] no free slots available")
 			break
@@ -217,7 +179,7 @@ func runDispatchInner() (string, error) {
 		}
 		log = append(log, fmt.Sprintf("  claimed on github"))
 
-		name, err := k8s.CreateJobFromTemplate(ctx, cs, string(template), issue.Number, slot, issue.Repo.CloneURL())
+		name, err := k8s.CreateJobFromTemplate(ctx, cs, template, issue.Number, slot, issue.Repo.CloneURL())
 		if err != nil {
 			log = append(log, fmt.Sprintf("  JOB ERROR: %v", err))
 		} else {

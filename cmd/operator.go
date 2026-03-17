@@ -2,9 +2,8 @@ package cmd
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 
+	"github.com/abix-/k3sc/internal/dispatch"
 	"github.com/abix-/k3sc/internal/k8s"
 	"github.com/abix-/k3sc/internal/operator"
 	"github.com/abix-/k3sc/internal/types"
@@ -39,46 +38,25 @@ func runOperator(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create manager: %w", err)
 	}
 
-	// k8s clientset for job creation and log reading
 	cs, err := k8s.NewClient()
 	if err != nil {
 		return fmt.Errorf("k8s client: %w", err)
 	}
 
-	// load job template
-	templatePath := os.Getenv("JOB_TEMPLATE")
-	if templatePath == "" {
-		exe, _ := os.Executable()
-		candidates := []string{
-			filepath.Join(filepath.Dir(exe), "manifests", "job-template.yaml"),
-			filepath.Join("manifests", "job-template.yaml"),
-			"/etc/dispatcher/job-template.yaml",
-		}
-		for _, c := range candidates {
-			if _, err := os.Stat(c); err == nil {
-				templatePath = c
-				break
-			}
-		}
-		if templatePath == "" {
-			templatePath = candidates[len(candidates)-1]
-		}
-	}
-	template, err := os.ReadFile(templatePath)
+	template, err := dispatch.LoadTemplate()
 	if err != nil {
-		return fmt.Errorf("read template %s: %w", templatePath, err)
+		return fmt.Errorf("load template: %w", err)
 	}
 
 	reconciler := &operator.Reconciler{
 		Client:   mgr.GetClient(),
 		K8s:      cs,
-		Template: string(template),
+		Template: template,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setup controller: %w", err)
 	}
 
-	// start github scanner in background
 	ctx := ctrl.SetupSignalHandler()
 	go operator.Scanner(ctx, mgr.GetClient(), types.Namespace)
 

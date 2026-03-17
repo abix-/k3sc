@@ -3,9 +3,9 @@ package operator
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
+	"github.com/abix-/k3sc/internal/dispatch"
 	"github.com/abix-/k3sc/internal/github"
 	"github.com/abix-/k3sc/internal/k8s"
 	"github.com/abix-/k3sc/internal/types"
@@ -19,7 +19,6 @@ import (
 
 const (
 	MaxRetries   = 3
-	MaxSlots     = 5
 	RequeueDelay = 10 * time.Second
 )
 
@@ -59,24 +58,10 @@ func (r *Reconciler) handlePending(ctx context.Context, task *ClaudeTask) (ctrl.
 	logger := log.FromContext(ctx)
 
 	// find a free slot
-	activeSlots, err := k8s.GetActiveSlots(ctx, r.K8s)
+	maxSlots := dispatch.MaxSlots()
+	slot, err := dispatch.FindFreeSlot(ctx, r.K8s, maxSlots)
 	if err != nil {
 		return ctrl.Result{RequeueAfter: RequeueDelay}, err
-	}
-
-	slot := -1
-	for i := 1; i <= MaxSlots; i++ {
-		found := false
-		for _, s := range activeSlots {
-			if s == i {
-				found = true
-				break
-			}
-		}
-		if !found {
-			slot = i
-			break
-		}
 	}
 	if slot == -1 {
 		logger.Info("no free slots, requeueing", "issue", task.Spec.IssueNumber)
@@ -87,7 +72,7 @@ func (r *Reconciler) handlePending(ctx context.Context, task *ClaudeTask) (ctrl.
 
 	// claim on github
 	if !task.Status.Claimed {
-		repo := repoFromSpec(task.Spec)
+		repo := dispatch.RepoFromString(task.Spec.Repo)
 		if err := github.ClaimIssue(ctx, repo, task.Spec.IssueNumber, agentName); err != nil {
 			logger.Error(err, "failed to claim issue", "issue", task.Spec.IssueNumber)
 			return ctrl.Result{RequeueAfter: RequeueDelay}, nil
@@ -171,7 +156,7 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *ClaudeTask, succ
 
 	// post result comment if not yet reported
 	if !task.Status.Reported {
-		repo := repoFromSpec(task.Spec)
+		repo := dispatch.RepoFromString(task.Spec.Repo)
 		podName, _ := k8s.FindPodForIssue(ctx, r.K8s, task.Spec.IssueNumber)
 		logTail := ""
 		if podName != "" {
@@ -205,7 +190,7 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *ClaudeTask, succ
 	// if failed and retries remaining, reset to pending
 	if !succeeded && task.Status.Attempts < MaxRetries {
 		// unclaim on github so it can be re-dispatched
-		repo := repoFromSpec(task.Spec)
+		repo := dispatch.RepoFromString(task.Spec.Repo)
 		returnLabel := "ready"
 		hasPR, _ := github.HasOpenPR(ctx, repo, task.Spec.IssueNumber)
 		if hasPR {
@@ -222,7 +207,7 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *ClaudeTask, succ
 
 	// if failed and no retries left, mark blocked
 	if !succeeded {
-		repo := repoFromSpec(task.Spec)
+		repo := dispatch.RepoFromString(task.Spec.Repo)
 		github.UnclaimIssue(ctx, repo, task.Spec.IssueNumber, task.Status.Agent, "needs-human")
 		task.Status.Phase = TaskPhaseBlocked
 		logger.Info("task blocked after max retries", "issue", task.Spec.IssueNumber)
@@ -240,14 +225,6 @@ func isJobDead(job *batchv1.Job) bool {
 		}
 	}
 	return false
-}
-
-func repoFromSpec(spec ClaudeTaskSpec) types.Repo {
-	parts := strings.SplitN(spec.Repo, "/", 2)
-	if len(parts) != 2 {
-		return types.Repos[0]
-	}
-	return types.Repo{Owner: parts[0], Name: parts[1]}
 }
 
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
