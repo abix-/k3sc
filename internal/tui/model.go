@@ -12,6 +12,12 @@ import (
 
 var loc, _ = time.LoadLocation("America/New_York")
 
+type LiveLog struct {
+	Issue int
+	Agent string
+	Lines []string
+}
+
 type Data struct {
 	NodeName      string
 	NodeVersion   string
@@ -19,44 +25,58 @@ type Data struct {
 	Issues        []types.Issue
 	PRs           []types.PullRequest
 	DispatcherLog string
+	LiveLogs      []LiveLog
 }
 
 type GatherFunc func() (*Data, error)
+type K8sGatherFunc func(current *Data) (*Data, error)
 type DispatchFunc func() (string, error)
+type SetMaxSlotsFunc func(n int)
 
-type tickMsg time.Time
+type k8sTickMsg time.Time
+type ghTickMsg time.Time
+type k8sData *Data
 type dispatchDone string
 
 type Model struct {
-	data       *Data
-	gatherFn   GatherFunc
-	dispatchFn DispatchFunc
-	statusMsg  string
-	maxSlots   int
-	paused     bool
-	width      int
-	height     int
-	quitting   bool
+	data         *Data
+	gatherFn     GatherFunc
+	k8sGatherFn  K8sGatherFunc
+	dispatchFn   DispatchFunc
+	setMaxSlots  SetMaxSlotsFunc
+	statusMsg    string
+	maxSlots     int
+	paused       bool
+	showDispatch bool
+	width        int
+	height       int
+	quitting     bool
 }
 
-// SetMaxSlotsFunc is called when user changes max slots
-type SetMaxSlotsFunc func(n int)
-
-var setMaxSlotsFn SetMaxSlotsFunc
-
-func NewModel(gatherFn GatherFunc, dispatchFn DispatchFunc, maxSlots int, setMaxSlots SetMaxSlotsFunc) Model {
-	setMaxSlotsFn = setMaxSlots
-	return Model{gatherFn: gatherFn, dispatchFn: dispatchFn, maxSlots: maxSlots}
+func NewModel(gatherFn GatherFunc, k8sGatherFn K8sGatherFunc, dispatchFn DispatchFunc, maxSlots int, setMaxSlots SetMaxSlotsFunc) Model {
+	return Model{
+		gatherFn:     gatherFn,
+		k8sGatherFn:  k8sGatherFn,
+		dispatchFn:   dispatchFn,
+		setMaxSlots:  setMaxSlots,
+		maxSlots:     maxSlots,
+		showDispatch: true,
+	}
 }
 
-func tickCmd() tea.Cmd {
-	return tea.Tick(15*time.Second, func(t time.Time) tea.Msg { return tickMsg(t) })
+func k8sTickCmd() tea.Cmd {
+	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg { return k8sTickMsg(t) })
+}
+
+func ghTickCmd() tea.Cmd {
+	return tea.Tick(30*time.Second, func(t time.Time) tea.Msg { return ghTickMsg(t) })
 }
 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg { d, _ := m.gatherFn(); return d },
-		tickCmd(),
+		k8sTickCmd(),
+		ghTickCmd(),
 	)
 }
 
@@ -87,22 +107,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.statusMsg = "dispatcher resumed"
 			}
+		case "d":
+			m.showDispatch = !m.showDispatch
 		case "r":
 			m.statusMsg = "refreshing..."
 			return m, func() tea.Msg { d, _ := m.gatherFn(); return d }
 		case "+", "=":
 			if m.maxSlots < 5 {
 				m.maxSlots++
-				if setMaxSlotsFn != nil {
-					setMaxSlotsFn(m.maxSlots)
+				if m.setMaxSlots != nil {
+					m.setMaxSlots(m.maxSlots)
 				}
 				m.statusMsg = fmt.Sprintf("max agents: %d", m.maxSlots)
 			}
 		case "-":
 			if m.maxSlots > 1 {
 				m.maxSlots--
-				if setMaxSlotsFn != nil {
-					setMaxSlotsFn(m.maxSlots)
+				if m.setMaxSlots != nil {
+					m.setMaxSlots(m.maxSlots)
 				}
 				m.statusMsg = fmt.Sprintf("max agents: %d", m.maxSlots)
 			}
@@ -110,11 +132,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-	case tickMsg:
+	case k8sTickMsg:
+		// fast local refresh: k8s pods + live logs only
+		return m, tea.Batch(
+			func() tea.Msg {
+				if m.k8sGatherFn != nil && m.data != nil {
+					d, _ := m.k8sGatherFn(m.data)
+					return k8sData(d)
+				}
+				return nil
+			},
+			k8sTickCmd(),
+		)
+	case ghTickMsg:
+		// slow remote refresh: github issues + PRs
 		return m, tea.Batch(
 			func() tea.Msg { d, _ := m.gatherFn(); return d },
-			tickCmd(),
+			ghTickCmd(),
 		)
+	case k8sData:
+		if msg != nil {
+			m.data = (*Data)(msg)
+		}
 	case *Data:
 		m.data = msg
 		if m.statusMsg == "refreshing..." {
@@ -147,7 +186,6 @@ func (m Model) View() string {
 
 	running, completed, failed := countPhases(d.Pods)
 
-	// styles
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("8")).
@@ -170,21 +208,22 @@ func (m Model) View() string {
 	}
 	clusterContent := fmt.Sprintf(" Node: %s %s  |  Agents: %d running, %d completed  |  Max slots: %d%s",
 		d.NodeName, d.NodeVersion, running, completed, m.maxSlots, pauseStr)
-	clusterBox := border.Copy().BorderTop(true).Render(
-		titleFg.Render(" Cluster") + "\n" + clusterContent)
+	clusterBox := border.Render(titleFg.Render(" Cluster") + "\n" + clusterContent)
 	sections = append(sections, clusterBox)
 
-	// -- dispatcher --
-	var dispLines []string
-	if d.DispatcherLog == "" {
-		dispLines = append(dispLines, dim.Render("  (no dispatcher runs found)"))
-	} else {
-		for _, line := range strings.Split(strings.TrimSpace(d.DispatcherLog), "\n") {
-			dispLines = append(dispLines, dim.Render("  "+line))
+	// -- dispatcher (toggle with d) --
+	if m.showDispatch {
+		var dispLines []string
+		if d.DispatcherLog == "" {
+			dispLines = append(dispLines, dim.Render("  (no dispatcher runs found)"))
+		} else {
+			for _, line := range strings.Split(strings.TrimSpace(d.DispatcherLog), "\n") {
+				dispLines = append(dispLines, dim.Render("  "+line))
+			}
 		}
+		dispBox := border.Render(titleFg.Render(" Dispatcher (last run)") + "\n" + strings.Join(dispLines, "\n"))
+		sections = append(sections, dispBox)
 	}
-	dispBox := border.Render(titleFg.Render(" Dispatcher (last run)") + "\n" + strings.Join(dispLines, "\n"))
-	sections = append(sections, dispBox)
 
 	// -- issues --
 	var issueLines []string
@@ -238,6 +277,19 @@ func (m Model) View() string {
 	agentBox := border.Render(titleFg.Render(agentTitle) + "\n" + strings.Join(agentLines, "\n"))
 	sections = append(sections, agentBox)
 
+	// -- live output (only if agents are running) --
+	if len(d.LiveLogs) > 0 {
+		var liveLines []string
+		for _, ll := range d.LiveLogs {
+			liveLines = append(liveLines, titleFg.Render(fmt.Sprintf(" -- %s (issue #%d) --", ll.Agent, ll.Issue)))
+			for _, line := range ll.Lines {
+				liveLines = append(liveLines, green.Render("  "+truncate(line, w-6)))
+			}
+		}
+		liveBox := border.Render(titleFg.Render(" Live Output") + "\n" + strings.Join(liveLines, "\n"))
+		sections = append(sections, liveBox)
+	}
+
 	// -- pull requests --
 	var prLines []string
 	if len(d.PRs) == 0 {
@@ -265,11 +317,11 @@ func (m Model) View() string {
 	prBox := border.Render(titleFg.Render(" Pull Requests") + "\n" + strings.Join(prLines, "\n"))
 	sections = append(sections, prBox)
 
-	// -- status + help bar --
+	// -- status + help --
 	if m.statusMsg != "" {
 		sections = append(sections, yellow.Render(" "+m.statusMsg))
 	}
-	sections = append(sections, dim.Render(" q: quit  |  n: dispatch  |  p: pause/resume  |  r: refresh  |  +/-: max agents  |  15s auto-refresh"))
+	sections = append(sections, dim.Render(" q: quit  n: dispatch  p: pause  d: toggle dispatcher  r: refresh  +/-: agents"))
 
 	return strings.Join(sections, "\n")
 }
@@ -311,7 +363,6 @@ func issueLink(number int) string {
 	url := fmt.Sprintf("https://github.com/%s/%s/issues/%d", types.RepoOwner, types.RepoName, number)
 	text := fmt.Sprintf("#%d", number)
 	link := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, text)
-	// pad to 7 chars total (# + up to 6 digits) outside the escape
 	if len(text) < 7 {
 		link += strings.Repeat(" ", 7-len(text))
 	}

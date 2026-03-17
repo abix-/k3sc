@@ -283,6 +283,71 @@ func runTop(cmd *cobra.Command, args []string) error {
 		}, nil
 	}
 
+	k8sGatherFn := func(current *tui.Data) (*tui.Data, error) {
+		ctx := context.Background()
+		cs, err := k8s.NewClient()
+		if err != nil {
+			return nil, err
+		}
+
+		var (
+			pods    []types.AgentPod
+			dispLog string
+			wg2     sync.WaitGroup
+			mu2     sync.Mutex
+		)
+		wg2.Add(2)
+		go func() {
+			defer wg2.Done()
+			p, _ := k8s.GetAgentPods(ctx, cs)
+			mu2.Lock()
+			pods = p
+			mu2.Unlock()
+		}()
+		go func() {
+			defer wg2.Done()
+			d, _ := k8s.GetDispatcherLog(ctx, cs)
+			mu2.Lock()
+			dispLog = d
+			mu2.Unlock()
+		}()
+		wg2.Wait()
+
+		// fetch tails + live logs for running pods
+		var lwg sync.WaitGroup
+		var liveLogs []tui.LiveLog
+		var liveMu sync.Mutex
+		for i := range pods {
+			lwg.Add(1)
+			go func(idx int) {
+				defer lwg.Done()
+				tail, _ := k8s.GetPodLogTail(ctx, cs, pods[idx].Name, 20)
+				pods[idx].LogTail = tail
+				if pods[idx].Phase == types.PhaseRunning {
+					lines, _ := k8s.GetPodLogLines(ctx, cs, pods[idx].Name, 8)
+					liveMu.Lock()
+					liveLogs = append(liveLogs, tui.LiveLog{
+						Issue: pods[idx].Issue,
+						Agent: fmt.Sprintf("claude-%d", pods[idx].Slot+types.SlotOffset),
+						Lines: lines,
+					})
+					liveMu.Unlock()
+				}
+			}(i)
+		}
+		lwg.Wait()
+
+		return &tui.Data{
+			NodeName:      current.NodeName,
+			NodeVersion:   current.NodeVersion,
+			Pods:          pods,
+			Issues:        current.Issues,
+			PRs:           current.PRs,
+			DispatcherLog: dispLog,
+			LiveLogs:      liveLogs,
+		}, nil
+	}
+
 	dispatchFn := func() (string, error) {
 		return RunDispatch()
 	}
@@ -290,11 +355,10 @@ func runTop(cmd *cobra.Command, args []string) error {
 	maxSlots := 3
 	setMaxSlots := func(n int) {
 		maxSlots = n
-		// update env so dispatch picks it up
 		os.Setenv("MAX_SLOTS", fmt.Sprintf("%d", n))
 	}
 
-	m := tui.NewModel(gatherFn, dispatchFn, maxSlots, setMaxSlots)
+	m := tui.NewModel(gatherFn, k8sGatherFn, dispatchFn, maxSlots, setMaxSlots)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err

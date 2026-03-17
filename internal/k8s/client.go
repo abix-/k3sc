@@ -128,6 +128,31 @@ func GetPodLogTail(ctx context.Context, cs *kubernetes.Clientset, podName string
 	return last, nil
 }
 
+func GetPodLogLines(ctx context.Context, cs *kubernetes.Clientset, podName string, n int64) ([]string, error) {
+	req := cs.CoreV1().Pods(types.Namespace).GetLogs(podName, &corev1.PodLogOptions{
+		TailLines: &n,
+	})
+	stream, err := req.Stream(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer stream.Close()
+
+	buf, err := io.ReadAll(stream)
+	if err != nil {
+		return nil, err
+	}
+
+	var lines []string
+	for _, line := range strings.Split(string(buf), "\n") {
+		t := strings.TrimSpace(line)
+		if t != "" {
+			lines = append(lines, t)
+		}
+	}
+	return lines, nil
+}
+
 func GetFullLog(ctx context.Context, cs *kubernetes.Clientset, podName string) (string, error) {
 	req := cs.CoreV1().Pods(types.Namespace).GetLogs(podName, &corev1.PodLogOptions{})
 	stream, err := req.Stream(ctx)
