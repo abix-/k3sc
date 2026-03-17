@@ -48,6 +48,7 @@ type Model struct {
 	maxSlots     int
 	paused       bool
 	showDispatch bool
+	showLive     bool
 	width        int
 	height       int
 	quitting     bool
@@ -61,6 +62,7 @@ func NewModel(gatherFn GatherFunc, k8sGatherFn K8sGatherFunc, dispatchFn Dispatc
 		setMaxSlots:  setMaxSlots,
 		maxSlots:     maxSlots,
 		showDispatch: true,
+		showLive:     true,
 	}
 }
 
@@ -109,6 +111,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "d":
 			m.showDispatch = !m.showDispatch
+		case "l":
+			m.showLive = !m.showLive
 		case "r":
 			m.statusMsg = "refreshing..."
 			return m, func() tea.Msg { d, _ := m.gatherFn(); return d }
@@ -183,8 +187,58 @@ func (m Model) View() string {
 	if w < 80 {
 		w = 120
 	}
+	h := m.height
+	if h < 20 {
+		h = 50
+	}
 
 	running, completed, failed := countPhases(d.Pods)
+
+	// height budget: each bordered box = 2 (border) + content lines
+	// fixed: cluster(3) + status(1) + help(1) = 5
+	fixedLines := 5
+	dispLines := 0
+	if m.showDispatch {
+		dispLines = min(len(strings.Split(strings.TrimSpace(d.DispatcherLog), "\n")), 4) + 2
+		if d.DispatcherLog == "" {
+			dispLines = 3
+		}
+	}
+	issueBudget := min(len(d.Issues), 10) + 3
+	if len(d.Issues) == 0 {
+		issueBudget = 3
+	}
+	prBudget := min(len(d.PRs), 6) + 3
+	if len(d.PRs) == 0 {
+		prBudget = 3
+	}
+	liveLogCount := len(d.LiveLogs)
+	statusLine := 0
+	if m.statusMsg != "" {
+		statusLine = 1
+	}
+
+	usedByFixed := fixedLines + dispLines + issueBudget + prBudget + statusLine
+	remaining := h - usedByFixed
+
+	// split remaining between agents and live output
+	maxLiveLines := 0
+	if liveLogCount > 0 {
+		for _, ll := range d.LiveLogs {
+			maxLiveLines += len(ll.Lines) + 1 // lines + agent header
+		}
+		maxLiveLines += 2 // border
+	}
+
+	agentBudget := remaining
+	liveBudget := 0
+	if liveLogCount > 0 {
+		// give live output up to 1/3 of remaining, rest to agents
+		liveBudget = min(remaining/3, maxLiveLines)
+		agentBudget = remaining - liveBudget
+	}
+	agentBudget = max(agentBudget, 5)
+	maxVisiblePods := max(agentBudget-3, 1) // subtract border + header
 
 	border := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
@@ -231,7 +285,8 @@ func (m Model) View() string {
 		issueLines = append(issueLines, dim.Render("  (no issues with workflow labels)"))
 	} else {
 		issueLines = append(issueLines, titleFg.Render(fmt.Sprintf(" %-7s %-14s %-10s Title", "Issue", "State", "Owner")))
-		for _, i := range d.Issues {
+		maxIssues := min(len(d.Issues), 10)
+		for _, i := range d.Issues[:maxIssues] {
 			line := fmt.Sprintf(" %s %-14s %-10s %s", issueLink(i.Number), i.State, i.Owner, truncate(i.Title, w-40))
 			switch i.State {
 			case "claimed":
@@ -250,13 +305,34 @@ func (m Model) View() string {
 	issueBox := border.Render(titleFg.Render(" GitHub Issues") + "\n" + strings.Join(issueLines, "\n"))
 	sections = append(sections, issueBox)
 
-	// -- agents --
+	// -- agents (capped to fit screen) --
 	var agentLines []string
 	if len(d.Pods) == 0 {
 		agentLines = append(agentLines, dim.Render("  (no agent pods)"))
 	} else {
 		agentLines = append(agentLines, titleFg.Render(fmt.Sprintf(" %-7s %-10s %-11s %-16s %-10s Last Output", "Issue", "Agent", "Status", "Started", "Duration")))
-		for _, pod := range d.Pods {
+		// show running pods first, then most recent completed, truncate oldest
+		visiblePods := d.Pods
+		if len(visiblePods) > maxVisiblePods {
+			// keep all running, truncate oldest completed
+			var runPods, donePods []types.AgentPod
+			for _, p := range visiblePods {
+				if p.Phase == types.PhaseRunning || p.Phase == types.PhasePending {
+					runPods = append(runPods, p)
+				} else {
+					donePods = append(donePods, p)
+				}
+			}
+			keep := maxVisiblePods - len(runPods)
+			if keep < 0 {
+				keep = 0
+			}
+			if len(donePods) > keep {
+				donePods = donePods[len(donePods)-keep:] // keep newest
+			}
+			visiblePods = append(runPods, donePods...)
+		}
+		for _, pod := range visiblePods {
 			agent := fmt.Sprintf("claude-%d", pod.Slot+types.SlotOffset)
 			started := fmtTime(pod.Started)
 			duration := fmtDuration(pod.Started, pod.Finished)
@@ -277,12 +353,19 @@ func (m Model) View() string {
 	agentBox := border.Render(titleFg.Render(agentTitle) + "\n" + strings.Join(agentLines, "\n"))
 	sections = append(sections, agentBox)
 
-	// -- live output (only if agents are running) --
-	if len(d.LiveLogs) > 0 {
+	// -- live output (only if agents are running, capped to budget) --
+	if m.showLive && len(d.LiveLogs) > 0 && liveBudget > 2 {
+		maxContentLines := liveBudget - 2 // border
 		var liveLines []string
 		for _, ll := range d.LiveLogs {
+			if len(liveLines) >= maxContentLines {
+				break
+			}
 			liveLines = append(liveLines, titleFg.Render(fmt.Sprintf(" -- %s (issue #%d) --", ll.Agent, ll.Issue)))
 			for _, line := range ll.Lines {
+				if len(liveLines) >= maxContentLines {
+					break
+				}
 				liveLines = append(liveLines, green.Render("  "+truncate(line, w-6)))
 			}
 		}
@@ -296,7 +379,8 @@ func (m Model) View() string {
 		prLines = append(prLines, dim.Render("  (no open pull requests)"))
 	} else {
 		prLines = append(prLines, titleFg.Render(fmt.Sprintf(" %-7s %-7s %-20s Title", "PR", "Issue", "Branch")))
-		for _, pr := range d.PRs {
+		maxPRs := min(len(d.PRs), 6)
+		for _, pr := range d.PRs[:maxPRs] {
 			prLink := func() string {
 				url := fmt.Sprintf("https://github.com/%s/%s/pull/%d", types.RepoOwner, types.RepoName, pr.Number)
 				text := fmt.Sprintf("#%d", pr.Number)
@@ -321,7 +405,7 @@ func (m Model) View() string {
 	if m.statusMsg != "" {
 		sections = append(sections, yellow.Render(" "+m.statusMsg))
 	}
-	sections = append(sections, dim.Render(" q: quit  n: dispatch  p: pause  d: toggle dispatcher  r: refresh  +/-: agents"))
+	sections = append(sections, dim.Render(" q: quit  n: dispatch  p: pause  d: dispatcher  l: live  r: refresh  +/-: agents"))
 
 	return strings.Join(sections, "\n")
 }
