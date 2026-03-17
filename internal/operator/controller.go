@@ -61,10 +61,22 @@ func (r *Reconciler) handlePending(ctx context.Context, task *ClaudeTask) (ctrl.
 	logger := log.FromContext(ctx)
 
 	maxSlots := dispatch.MaxSlots()
-	slot, err := dispatch.FindFreeSlot(ctx, r.K8s, maxSlots)
-	if err != nil {
+
+	// find slots in use by other active ClaudeTasks (source of truth is the CRs, not k8s Jobs)
+	var allTasks ClaudeTaskList
+	if err := r.List(ctx, &allTasks, client.InNamespace(task.Namespace)); err != nil {
 		return ctrl.Result{RequeueAfter: RequeueDelay}, err
 	}
+	var usedSlots []int
+	for _, t := range allTasks.Items {
+		if t.Name == task.Name {
+			continue
+		}
+		if t.Status.Phase == TaskPhaseAssigned || t.Status.Phase == TaskPhaseRunning {
+			usedSlots = append(usedSlots, t.Status.Slot)
+		}
+	}
+	slot := dispatch.FindFreeSlotFromList(usedSlots, maxSlots)
 	if slot == -1 {
 		logger.Info("no free slots, requeueing", "issue", task.Spec.IssueNumber)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
