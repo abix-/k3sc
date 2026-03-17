@@ -20,7 +20,7 @@ spec:
             - name: dispatcher
               image: claude-agent:latest
               imagePullPolicy: Never
-              command: ["bash", "/etc/dispatcher/dispatcher.sh"]
+              command: ["python3", "/etc/dispatcher/dispatcher.py"]
               env:
                 - name: GITHUB_TOKEN
                   valueFrom:
