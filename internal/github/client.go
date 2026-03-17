@@ -228,6 +228,13 @@ func HasOpenPR(ctx context.Context, repo types.Repo, issueNumber int) (bool, err
 	return len(prs) > 0, nil
 }
 
+// PostComment posts a comment on a GitHub issue.
+func PostComment(ctx context.Context, repo types.Repo, issueNumber int, body string) error {
+	client := newClient(ctx)
+	_, _, err := client.Issues.CreateComment(ctx, repo.Owner, repo.Name, issueNumber, &gh.IssueComment{Body: &body})
+	return err
+}
+
 func GetWorkflowIssues(ctx context.Context) ([]types.Issue, error) {
 	return GetAllOpenIssues(ctx)
 }

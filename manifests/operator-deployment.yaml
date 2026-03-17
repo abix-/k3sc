@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: k3sc-operator
+  namespace: claude-agents
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: k3sc-operator
+  template:
+    metadata:
+      labels:
+        app: k3sc-operator
+    spec:
+      serviceAccountName: dispatcher
+      containers:
+        - name: operator
+          image: claude-agent:latest
+          imagePullPolicy: Never
+          command: ["/usr/local/bin/k3sc", "operator"]
+          env:
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: claude-secrets
+                  key: GITHUB_TOKEN
+          volumeMounts:
+            - name: dispatcher-scripts
+              mountPath: /etc/dispatcher
+      volumes:
+        - name: dispatcher-scripts
+          configMap:
+            name: dispatcher-scripts
