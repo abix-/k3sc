@@ -61,6 +61,7 @@ type dashboard struct {
 	nodeVersion   string
 	pods          []types.AgentPod
 	issues        []types.Issue
+	prs           []types.PullRequest
 	dispatcherLog string
 }
 
@@ -75,13 +76,14 @@ func gather() (*dashboard, error) {
 		nodeName, nodeVersion string
 		pods                  []types.AgentPod
 		issues                []types.Issue
+		prs                   []types.PullRequest
 		dispLog               string
 		mu                    sync.Mutex
 		wg                    sync.WaitGroup
 		errs                  []error
 	)
 
-	wg.Add(4)
+	wg.Add(5)
 	go func() {
 		defer wg.Done()
 		n, v, e := k8s.GetNodeInfo(ctx, cs)
@@ -107,6 +109,16 @@ func gather() (*dashboard, error) {
 		i, e := github.GetWorkflowIssues(ctx)
 		mu.Lock()
 		issues = i
+		if e != nil {
+			errs = append(errs, e)
+		}
+		mu.Unlock()
+	}()
+	go func() {
+		defer wg.Done()
+		p, e := github.GetOpenPRs(ctx)
+		mu.Lock()
+		prs = p
 		if e != nil {
 			errs = append(errs, e)
 		}
@@ -141,6 +153,7 @@ func gather() (*dashboard, error) {
 		nodeVersion:   nodeVersion,
 		pods:          pods,
 		issues:        issues,
+		prs:           prs,
 		dispatcherLog: dispLog,
 	}, nil
 }
@@ -265,6 +278,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 			NodeVersion:   d.nodeVersion,
 			Pods:          d.pods,
 			Issues:        d.issues,
+			PRs:           d.prs,
 			DispatcherLog: d.dispatcherLog,
 		}, nil
 	}

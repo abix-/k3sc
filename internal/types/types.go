@@ -55,3 +55,12 @@ type Issue struct {
 	State  string
 	Owner  string
 }
+
+type PullRequest struct {
+	Number int
+	Title  string
+	State  string // OPEN, MERGED, CLOSED
+	Branch string
+	Issue  int // linked issue number (from branch name issue-N)
+}
+

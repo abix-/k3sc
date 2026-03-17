@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sort"
 	"strings"
@@ -93,6 +94,38 @@ func GetIssuesByLabel(ctx context.Context, label string) ([]types.Issue, error) 
 	sort.Slice(result, func(i, j int) bool {
 		return result[i].Number < result[j].Number
 	})
+	return result, nil
+}
+
+func GetOpenPRs(ctx context.Context) ([]types.PullRequest, error) {
+	client := newClient(ctx)
+	opts := &gh.PullRequestListOptions{
+		State:       "open",
+		Sort:        "created",
+		Direction:   "asc",
+		ListOptions: gh.ListOptions{PerPage: 50},
+	}
+
+	prs, _, err := client.PullRequests.List(ctx, types.RepoOwner, types.RepoName, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []types.PullRequest
+	for _, pr := range prs {
+		branch := pr.GetHead().GetRef()
+		issueNum := 0
+		if strings.HasPrefix(branch, "issue-") {
+			fmt.Sscanf(branch, "issue-%d", &issueNum)
+		}
+		result = append(result, types.PullRequest{
+			Number: pr.GetNumber(),
+			Title:  pr.GetTitle(),
+			State:  pr.GetState(),
+			Branch: branch,
+			Issue:  issueNum,
+		})
+	}
 	return result, nil
 }
 

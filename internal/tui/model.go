@@ -17,6 +17,7 @@ type Data struct {
 	NodeVersion   string
 	Pods          []types.AgentPod
 	Issues        []types.Issue
+	PRs           []types.PullRequest
 	DispatcherLog string
 }
 
@@ -32,6 +33,7 @@ type Model struct {
 	dispatchFn DispatchFunc
 	statusMsg  string
 	maxSlots   int
+	paused     bool
 	width      int
 	height     int
 	quitting   bool
@@ -66,6 +68,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 		case "n":
+			if m.paused {
+				m.statusMsg = "dispatcher is paused (press p to resume)"
+				return m, nil
+			}
 			m.statusMsg = "dispatching..."
 			return m, func() tea.Msg {
 				log, err := m.dispatchFn()
@@ -73,6 +79,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return fmt.Sprintf("dispatch error: %v", err)
 				}
 				return dispatchDone(log)
+			}
+		case "p":
+			m.paused = !m.paused
+			if m.paused {
+				m.statusMsg = "dispatcher PAUSED"
+			} else {
+				m.statusMsg = "dispatcher resumed"
 			}
 		case "r":
 			m.statusMsg = "refreshing..."
@@ -151,8 +164,12 @@ func (m Model) View() string {
 	var sections []string
 
 	// -- cluster --
-	clusterContent := fmt.Sprintf(" Node: %s %s  |  Agents: %d running, %d completed  |  Max slots: %d",
-		d.NodeName, d.NodeVersion, running, completed, m.maxSlots)
+	pauseStr := ""
+	if m.paused {
+		pauseStr = "  |  PAUSED"
+	}
+	clusterContent := fmt.Sprintf(" Node: %s %s  |  Agents: %d running, %d completed  |  Max slots: %d%s",
+		d.NodeName, d.NodeVersion, running, completed, m.maxSlots, pauseStr)
 	clusterBox := border.Copy().BorderTop(true).Render(
 		titleFg.Render(" Cluster") + "\n" + clusterContent)
 	sections = append(sections, clusterBox)
@@ -221,11 +238,38 @@ func (m Model) View() string {
 	agentBox := border.Render(titleFg.Render(agentTitle) + "\n" + strings.Join(agentLines, "\n"))
 	sections = append(sections, agentBox)
 
+	// -- pull requests --
+	var prLines []string
+	if len(d.PRs) == 0 {
+		prLines = append(prLines, dim.Render("  (no open pull requests)"))
+	} else {
+		prLines = append(prLines, titleFg.Render(fmt.Sprintf(" %-7s %-7s %-20s Title", "PR", "Issue", "Branch")))
+		for _, pr := range d.PRs {
+			prLink := func() string {
+				url := fmt.Sprintf("https://github.com/%s/%s/pull/%d", types.RepoOwner, types.RepoName, pr.Number)
+				text := fmt.Sprintf("#%d", pr.Number)
+				l := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, text)
+				if len(text) < 7 {
+					l += strings.Repeat(" ", 7-len(text))
+				}
+				return l
+			}()
+			issueRef := ""
+			if pr.Issue > 0 {
+				issueRef = fmt.Sprintf("#%d", pr.Issue)
+			}
+			line := fmt.Sprintf(" %s %-7s %-20s %s", prLink, issueRef, truncate(pr.Branch, 20), truncate(pr.Title, w-45))
+			prLines = append(prLines, cyan.Render(line))
+		}
+	}
+	prBox := border.Render(titleFg.Render(" Pull Requests") + "\n" + strings.Join(prLines, "\n"))
+	sections = append(sections, prBox)
+
 	// -- status + help bar --
 	if m.statusMsg != "" {
 		sections = append(sections, yellow.Render(" "+m.statusMsg))
 	}
-	sections = append(sections, dim.Render(" q: quit  |  n: dispatch now  |  r: refresh  |  +/-: max agents  |  refreshes every 5s"))
+	sections = append(sections, dim.Render(" q: quit  |  n: dispatch  |  p: pause/resume  |  r: refresh  |  +/-: max agents  |  5s auto-refresh"))
 
 	return strings.Join(sections, "\n")
 }
