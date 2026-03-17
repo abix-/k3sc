@@ -253,7 +253,11 @@ func (m Model) renderView(maxVisiblePods int) string {
 			dispLines = append(dispLines, dim.Render("  (no operator logs)"))
 		} else {
 			for _, line := range strings.Split(strings.TrimSpace(d.OperatorLog), "\n") {
-				dispLines = append(dispLines, dim.Render("  "+line))
+				// word wrap long lines
+				wrapped := wordWrap(line, w-4)
+				for _, wl := range wrapped {
+					dispLines = append(dispLines, dim.Render("  "+wl))
+				}
 			}
 		}
 		sections = append(sections, sep)
@@ -446,4 +450,30 @@ func copyToClipboard(s string) {
 	c := exec.Command("clip")
 	c.Stdin = strings.NewReader(s)
 	c.Run()
+}
+
+func wordWrap(s string, width int) []string {
+	if width <= 0 || len(s) <= width {
+		return []string{s}
+	}
+	var lines []string
+	for len(s) > width {
+		// find last space before width
+		cut := width
+		for cut > 0 && s[cut] != ' ' {
+			cut--
+		}
+		if cut == 0 {
+			cut = width // no space found, hard break
+		}
+		lines = append(lines, s[:cut])
+		s = s[cut:]
+		if len(s) > 0 && s[0] == ' ' {
+			s = s[1:]
+		}
+	}
+	if len(s) > 0 {
+		lines = append(lines, s)
+	}
+	return lines
 }

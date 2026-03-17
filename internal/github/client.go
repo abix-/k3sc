@@ -136,16 +136,18 @@ func GetAllOpenIssues(ctx context.Context) ([]types.Issue, error) {
 
 			state, owner := parseIssueLabels(i.Labels)
 			result = append(result, types.Issue{
-				Number: i.GetNumber(),
-				Title:  i.GetTitle(),
-				State:  state,
-				Owner:  owner,
-				Repo:   repo,
+				Number:    i.GetNumber(),
+				Title:     i.GetTitle(),
+				State:     state,
+				Owner:     owner,
+				Repo:      repo,
+				CreatedAt: i.GetCreatedAt().Time,
 			})
 		}
 	}
 
-	sort.Slice(result, func(i, j int) bool { return result[i].Number < result[j].Number })
+	// oldest first by creation date
+	sort.Slice(result, func(i, j int) bool { return result[i].CreatedAt.Before(result[j].CreatedAt) })
 	return result, nil
 }
 

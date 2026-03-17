@@ -132,15 +132,19 @@ func GetClaudeTasks(ctx context.Context) ([]types.TaskInfo, error) {
 		result = append(result, t)
 	}
 
+	// newest first, no phase ordering
 	sort.Slice(result, func(i, j int) bool {
-		oi, oj := result[i].PhaseOrder(), result[j].PhaseOrder()
-		if oi != oj {
-			return oi < oj
-		}
-		if result[i].Started == nil || result[j].Started == nil {
+		ti, tj := result[i].Started, result[j].Started
+		if ti == nil && tj == nil {
 			return false
 		}
-		return result[j].Started.Before(*result[i].Started)
+		if ti == nil {
+			return false
+		}
+		if tj == nil {
+			return true
+		}
+		return tj.Before(*ti)
 	})
 
 	return result, nil
@@ -184,15 +188,19 @@ func GetAgentPods(ctx context.Context, cs *kubernetes.Clientset) ([]types.AgentP
 		})
 	}
 
+	// newest first
 	sort.Slice(result, func(i, j int) bool {
-		oi, oj := result[i].Phase.Order(), result[j].Phase.Order()
-		if oi != oj {
-			return oi < oj
-		}
-		if result[i].Started == nil || result[j].Started == nil {
+		ti, tj := result[i].Started, result[j].Started
+		if ti == nil && tj == nil {
 			return false
 		}
-		return result[j].Started.Before(*result[i].Started)
+		if ti == nil {
+			return false
+		}
+		if tj == nil {
+			return true
+		}
+		return tj.Before(*ti)
 	})
 
 	return result, nil

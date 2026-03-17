@@ -114,11 +114,12 @@ func (t TaskInfo) PhaseOrder() int {
 }
 
 type Issue struct {
-	Number int
-	Title  string
-	State  string
-	Owner  string
-	Repo   Repo
+	Number    int
+	Title     string
+	State     string
+	Owner     string
+	Repo      Repo
+	CreatedAt time.Time
 }
 
 type PullRequest struct {
