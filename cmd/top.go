@@ -15,6 +15,7 @@ import (
 	"github.com/abix-/k3sc/internal/types"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 )
 
@@ -78,12 +79,8 @@ type dashboard struct {
 	dispatcherLog string
 }
 
-func gather() (*dashboard, error) {
+func gather(cs *kubernetes.Clientset) (*dashboard, error) {
 	ctx := context.Background()
-	cs, err := k8s.NewClient()
-	if err != nil {
-		return nil, err
-	}
 
 	var (
 		nodeName, nodeVersion string
@@ -222,8 +219,13 @@ func printDashboard(d *dashboard) {
 }
 
 func runTop(cmd *cobra.Command, args []string) error {
+	cs, err := k8s.NewClient()
+	if err != nil {
+		return err
+	}
+
 	if once {
-		d, err := gather()
+		d, err := gather(cs)
 		if err != nil {
 			return err
 		}
@@ -238,7 +240,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 
 	// TUI mode
 	gatherFn := func() (*tui.Data, error) {
-		d, err := gather()
+		d, err := gather(cs)
 		if err != nil {
 			return nil, err
 		}
@@ -254,10 +256,6 @@ func runTop(cmd *cobra.Command, args []string) error {
 
 	k8sGatherFn := func(current *tui.Data) (*tui.Data, error) {
 		ctx := context.Background()
-		cs, err := k8s.NewClient()
-		if err != nil {
-			return nil, err
-		}
 
 		var (
 			pods    []types.AgentPod
@@ -332,6 +330,6 @@ func runTop(cmd *cobra.Command, args []string) error {
 
 	m := tui.NewModel(gatherFn, k8sGatherFn, dispatchFn, maxSlots, setMaxSlots, logBuf.Lines)
 	p := tea.NewProgram(m, tea.WithAltScreen())
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }
