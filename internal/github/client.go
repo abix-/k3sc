@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/abix-/claude-k3/internal/types"
+	"github.com/abix-/k3sc/internal/types"
 	gh "github.com/google/go-github/v68/github"
 	"golang.org/x/oauth2"
 )

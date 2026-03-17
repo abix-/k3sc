@@ -9,10 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/abix-/claude-k3/internal/github"
-	"github.com/abix-/claude-k3/internal/k8s"
+	"github.com/abix-/k3sc/internal/github"
+	"github.com/abix-/k3sc/internal/k8s"
 	"github.com/spf13/cobra"
 )
+
+const usageLimitLookback = 15 * time.Minute
 
 func init() {
 	rootCmd.AddCommand(dispatchCmd)
@@ -71,6 +73,51 @@ func runDispatchInner() (string, error) {
 	now := time.Now().In(loc).Format("3:04 PM MST")
 	log = append(log, fmt.Sprintf("[dispatcher] %s starting scan", now))
 
+	cs, err := k8s.NewClient()
+	if err != nil {
+		return "", fmt.Errorf("k8s client: %w", err)
+	}
+
+	nowUTC := time.Now().UTC()
+	skipBackoff, restored, restoredTo, resetAt, err := k8s.CheckAndRestoreDispatcherBackoff(ctx, cs, k8s.DispatcherCronJobName, nowUTC)
+	if err != nil {
+		return "", fmt.Errorf("dispatcher backoff state: %w", err)
+	}
+	if restored && resetAt != nil {
+		log = append(log, fmt.Sprintf("[dispatcher] usage limit window ended at %s -- restored cron schedule to %s", resetAt.Format(time.RFC3339), restoredTo))
+	}
+	if skipBackoff && resetAt != nil {
+		log = append(log, fmt.Sprintf("[dispatcher] usage backoff active until %s -- skipping dispatch", resetAt.Format(time.RFC3339)))
+		now = time.Now().In(loc).Format("3:04 PM MST")
+		log = append(log, fmt.Sprintf("[dispatcher] %s scan complete -- skipped due to usage backoff", now))
+		return strings.Join(log, "\n") + "\n", nil
+	}
+
+	usageLimitPod, usageLimitLog, err := k8s.FindRecentUsageLimitPod(ctx, cs, usageLimitLookback)
+	if err != nil {
+		return "", fmt.Errorf("usage limit detection: %w", err)
+	}
+	if usageLimitPod != nil {
+		resetAt, ok := k8s.ParseUsageLimitResetTime(nowUTC, usageLimitLog)
+		if !ok {
+			resetAt = nowUTC.Add(time.Hour)
+			log = append(log, fmt.Sprintf("[dispatcher] usage limit detected but reset time was unparseable -- using fallback %s", resetAt.Format(time.RFC3339)))
+		}
+		changed, previous, err := k8s.SetDispatcherBackoff(ctx, cs, k8s.DispatcherCronJobName, resetAt)
+		if err != nil {
+			return "", fmt.Errorf("set dispatcher backoff: %w", err)
+		}
+		log = append(log, fmt.Sprintf("[dispatcher] Claude usage limit detected in pod %s for %s#%d", usageLimitPod.Name, usageLimitPod.Repo.Name, usageLimitPod.Issue))
+		if changed {
+			log = append(log, fmt.Sprintf("[dispatcher] changed cron schedule from %s to %s until %s", previous, k8s.DispatcherHourlySchedule, resetAt.Format(time.RFC3339)))
+		} else {
+			log = append(log, fmt.Sprintf("[dispatcher] cron schedule already %s; backoff window now ends at %s", k8s.DispatcherHourlySchedule, resetAt.Format(time.RFC3339)))
+		}
+		now = time.Now().In(loc).Format("3:04 PM MST")
+		log = append(log, fmt.Sprintf("[dispatcher] %s scan complete -- skipped due to usage backoff", now))
+		return strings.Join(log, "\n") + "\n", nil
+	}
+
 	eligible, err := github.GetEligibleIssues(ctx)
 	if err != nil {
 		log = append(log, fmt.Sprintf("[dispatcher] github error: %v", err))
@@ -86,11 +133,6 @@ func runDispatchInner() (string, error) {
 		nums = append(nums, fmt.Sprintf("%s#%d", i.Repo.Name, i.Number))
 	}
 	log = append(log, fmt.Sprintf("[dispatcher] eligible issues: %s", strings.Join(nums, " ")))
-
-	cs, err := k8s.NewClient()
-	if err != nil {
-		return "", fmt.Errorf("k8s client: %w", err)
-	}
 
 	activeSlots, err := k8s.GetActiveSlots(ctx, cs)
 	if err != nil {

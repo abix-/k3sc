@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/abix-/claude-k3/internal/types"
+	"github.com/abix-/k3sc/internal/types"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,8 +25,8 @@ const (
 	DispatcherCronJobName              = "claude-dispatcher"
 	DispatcherDefaultSchedule          = "*/3 * * * *"
 	DispatcherHourlySchedule           = "0 * * * *"
-	DispatcherNormalScheduleAnnotation = "claude-k3.abix.dev/normal-schedule"
-	DispatcherUsageResetAtAnnotation   = "claude-k3.abix.dev/usage-reset-at"
+	DispatcherNormalScheduleAnnotation = "k3sc.abix.dev/normal-schedule"
+	DispatcherUsageResetAtAnnotation   = "k3sc.abix.dev/usage-reset-at"
 	UsageLimitMessage                  = "You're out of extra usage"
 )
 

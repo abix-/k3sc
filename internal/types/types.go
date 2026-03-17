@@ -17,7 +17,7 @@ func (r Repo) CloneURL() string {
 
 var Repos = []Repo{
 	{Owner: "abix-", Name: "endless"},
-	{Owner: "abix-", Name: "claude-k3"},
+	{Owner: "abix-", Name: "k3sc"},
 }
 
 // SlotLetter converts a 1-based slot number to a letter (1=a, 2=b, ..., 26=z).

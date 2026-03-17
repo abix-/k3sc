@@ -37,9 +37,9 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
     sh -s -- -y --default-toolchain stable --profile minimal && \
     rustup component add clippy rustfmt
 
-# claude-k3 binary (pre-built for linux, includes cargo-lock subcommand)
-COPY claude-k3 /usr/local/bin/claude-k3
-RUN chmod +x /usr/local/bin/claude-k3
+# k3sc binary (pre-built for linux, includes cargo-lock subcommand)
+COPY k3sc /usr/local/bin/k3sc
+RUN chmod +x /usr/local/bin/k3sc
 
 # entrypoint
 COPY entrypoint.sh /entrypoint.sh

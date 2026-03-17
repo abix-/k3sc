@@ -8,7 +8,7 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "claude-k3",
+	Use:   "k3sc",
 	Short: "k3s Claude agent management",
 }
 

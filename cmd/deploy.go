@@ -34,7 +34,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	ex, _ := os.Executable()
 	repoRoot := filepath.Dir(ex)
 	// fallback: check common locations
-	for _, candidate := range []string{repoRoot, "/mnt/c/code/claude-k3", "."} {
+	for _, candidate := range []string{repoRoot, "/mnt/c/code/k3sc", "."} {
 		if _, err := os.Stat(filepath.Join(candidate, "manifests")); err == nil {
 			repoRoot = candidate
 			break

@@ -20,7 +20,7 @@ spec:
             - name: dispatcher
               image: claude-agent:latest
               imagePullPolicy: Never
-              command: ["/usr/local/bin/claude-k3", "dispatch"]
+              command: ["/usr/local/bin/k3sc", "dispatch"]
               env:
                 - name: GITHUB_TOKEN
                   valueFrom:
@@ -35,7 +35,7 @@ spec:
               configMap:
                 name: dispatcher-scripts
 ---
-# RBAC: dispatcher needs permission to manage jobs in the namespace
+# RBAC: dispatcher needs permission to manage jobs, inspect recent pod failures, and back off its own schedule.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -48,9 +48,18 @@ metadata:
   name: dispatcher
   namespace: claude-agents
 rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
   - apiGroups: ["batch"]
     resources: ["jobs"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "list", "watch", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

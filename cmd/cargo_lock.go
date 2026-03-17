@@ -26,7 +26,7 @@ var cargoLockCmd = &cobra.Command{
 
 func runCargoLock(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: claude-k3 cargo-lock <cargo subcommand> [args...]")
+		return fmt.Errorf("usage: k3sc cargo-lock <cargo subcommand> [args...]")
 	}
 
 	// find lockfile: $CARGO_TARGET_DIR/.cargo-build.lock or auto-detect

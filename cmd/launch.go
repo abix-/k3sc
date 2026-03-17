@@ -21,7 +21,7 @@ var launchCmd = &cobra.Command{
 	RunE:  runLaunch,
 }
 
-const lockFile = ".claude-k3.lock"
+const lockFile = ".k3sc.lock"
 
 func runLaunch(cmd *cobra.Command, args []string) error {
 	base := `C:\code`

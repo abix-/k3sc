@@ -1,6 +1,6 @@
 package main
 
-import "github.com/abix-/claude-k3/cmd"
+import "github.com/abix-/k3sc/cmd"
 
 func main() {
 	cmd.Execute()
