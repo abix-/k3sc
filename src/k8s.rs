@@ -167,6 +167,34 @@ pub async fn create_job_from_template(
     Ok(created.metadata.name.unwrap_or_default())
 }
 
+pub async fn get_dispatcher_log(client: &Client) -> Result<String> {
+    let pods: Api<Pod> = Api::namespaced(client.clone(), NAMESPACE);
+    let lp = ListParams::default().labels("job-name");
+    let list = pods.list(&lp).await?;
+
+    // find most recent dispatcher pod
+    let mut dispatchers: Vec<_> = list
+        .into_iter()
+        .filter(|p| {
+            p.metadata
+                .name
+                .as_deref()
+                .map(|n| n.contains("dispatcher"))
+                .unwrap_or(false)
+        })
+        .collect();
+    dispatchers.sort_by(|a, b| {
+        a.metadata.creation_timestamp.cmp(&b.metadata.creation_timestamp)
+    });
+
+    let Some(pod) = dispatchers.last() else {
+        return Ok("(no dispatcher runs found)".into());
+    };
+    let pod_name = pod.metadata.name.as_deref().unwrap_or("");
+    let lp = LogParams::default();
+    Ok(pods.logs(pod_name, &lp).await.unwrap_or_default())
+}
+
 pub async fn get_node_info(client: &Client) -> Result<(String, String)> {
     let nodes: Api<Node> = Api::all(client.clone());
     let list = nodes.list(&ListParams::default()).await?;

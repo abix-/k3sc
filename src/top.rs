@@ -7,8 +7,8 @@ use crate::k8s;
 use crate::types::{AgentPod, Issue, PodPhase, SLOT_OFFSET};
 
 pub fn fmt_time(dt: DateTime<Utc>) -> String {
-    let est = dt.with_timezone(&New_York);
-    est.format("%-I:%M %p EST").to_string()
+    let et = dt.with_timezone(&New_York);
+    et.format("%-I:%M %p %Z").to_string()
 }
 
 pub fn fmt_duration(start: DateTime<Utc>, end: Option<DateTime<Utc>>) -> String {
@@ -22,16 +22,18 @@ struct Dashboard {
     node_version: String,
     pods: Vec<AgentPod>,
     issues: Vec<Issue>,
+    dispatcher_log: String,
 }
 
 async fn gather() -> Result<Dashboard> {
     let client = k8s::new_client().await?;
 
     // parallel fetch
-    let (node_info, mut pods, issues) = tokio::try_join!(
+    let (node_info, mut pods, issues, dispatcher_log) = tokio::try_join!(
         k8s::get_node_info(&client),
         k8s::get_agent_pods(&client),
         github::get_workflow_issues(),
+        k8s::get_dispatcher_log(&client),
     )?;
 
     // fetch log tails in parallel
@@ -47,7 +49,7 @@ async fn gather() -> Result<Dashboard> {
         pods[i].log_tail = handle.await.unwrap_or_default();
     }
 
-    // sort: running first, then by start time
+    // sort: running first, then completed, then failed -- oldest first within each group
     pods.sort_by(|a, b| a.phase.cmp(&b.phase).then(a.started.cmp(&b.started)));
 
     Ok(Dashboard {
@@ -55,6 +57,7 @@ async fn gather() -> Result<Dashboard> {
         node_version: node_info.1,
         pods,
         issues,
+        dispatcher_log,
     })
 }
 
@@ -63,6 +66,30 @@ fn print_dashboard(d: &Dashboard) {
     println!("Node: {} Ready {}", d.node_name, d.node_version);
     println!();
 
+    // 1. Issues first
+    println!("=== GITHUB ISSUES ===");
+    if d.issues.is_empty() {
+        println!("  (no issues with workflow labels)");
+    } else {
+        println!("{:<7} {:<14} {:<10} Title", "Issue", "State", "Owner");
+        for i in &d.issues {
+            println!("#{:<6} {:<14} {:<10} {}", i.number, i.state, i.owner, i.title);
+        }
+    }
+    println!();
+
+    // 2. Dispatcher
+    println!("=== DISPATCHER ===");
+    if d.dispatcher_log.is_empty() {
+        println!("  (no dispatcher runs found)");
+    } else {
+        for line in d.dispatcher_log.lines() {
+            println!("  {line}");
+        }
+    }
+    println!();
+
+    // 3. Agents last
     let running = d.pods.iter().filter(|p| p.phase == PodPhase::Running).count();
     let completed = d.pods.iter().filter(|p| p.phase == PodPhase::Succeeded).count();
     let failed = d.pods.iter().filter(|p| p.phase == PodPhase::Failed).count();
@@ -88,17 +115,6 @@ fn print_dashboard(d: &Dashboard) {
                 duration,
                 pod.log_tail
             );
-        }
-    }
-    println!();
-
-    println!("=== GITHUB ISSUES ===");
-    if d.issues.is_empty() {
-        println!("  (no issues with workflow labels)");
-    } else {
-        println!("{:<7} {:<14} {:<10} Title", "Issue", "State", "Owner");
-        for i in &d.issues {
-            println!("#{:<6} {:<14} {:<10} {}", i.number, i.state, i.owner, i.title);
         }
     }
     println!();
@@ -141,6 +157,9 @@ async fn run_tui() -> Result<()> {
                 dashboard = d;
             }
             last_refresh = std::time::Instant::now();
+            if !status_msg.is_empty() {
+                status_msg = String::new();
+            }
         }
 
         terminal.draw(|f| {
@@ -148,8 +167,9 @@ async fn run_tui() -> Result<()> {
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Length(3),  // cluster
-                    Constraint::Min(8),     // agents
                     Constraint::Length(12), // issues
+                    Constraint::Length(6),  // dispatcher
+                    Constraint::Min(6),    // agents
                     Constraint::Length(1),  // help
                 ])
                 .split(f.area());
@@ -164,7 +184,46 @@ async fn run_tui() -> Result<()> {
             .block(Block::default().borders(Borders::ALL).title(" Cluster "));
             f.render_widget(cluster, chunks[0]);
 
-            // agents table
+            // 1. issues
+            let issue_header = Row::new(["Issue", "State", "Owner", "Title"])
+                .style(Style::default().bold());
+            let issue_rows: Vec<Row> = dashboard.issues.iter().map(|i| {
+                let style = match i.state.as_str() {
+                    "claimed" => Style::default().fg(Color::Yellow),
+                    "needs-human" => Style::default().fg(Color::Magenta),
+                    "needs-review" => Style::default().fg(Color::Cyan),
+                    "ready" => Style::default().fg(Color::Green),
+                    _ => Style::default(),
+                };
+                Row::new([
+                    format!("#{}", i.number),
+                    i.state.clone(),
+                    i.owner.clone(),
+                    i.title.clone(),
+                ]).style(style)
+            }).collect();
+            let issue_table = Table::new(issue_rows, [
+                Constraint::Length(7),
+                Constraint::Length(14),
+                Constraint::Length(10),
+                Constraint::Fill(1),
+            ])
+            .header(issue_header)
+            .block(Block::default().borders(Borders::ALL).title(" GitHub Issues "));
+            f.render_widget(issue_table, chunks[1]);
+
+            // 2. dispatcher log
+            let disp_lines: String = dashboard.dispatcher_log
+                .lines()
+                .map(|l| format!(" {l}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let dispatcher = Paragraph::new(disp_lines)
+                .block(Block::default().borders(Borders::ALL).title(" Dispatcher (last run) "))
+                .style(Style::default().fg(Color::DarkGray));
+            f.render_widget(dispatcher, chunks[2]);
+
+            // 3. agents table
             let header = Row::new(["Issue", "Agent", "Status", "Started", "Duration", "Last Output"])
                 .style(Style::default().bold());
             let rows: Vec<Row> = dashboard.pods.iter().map(|pod| {
@@ -196,35 +255,7 @@ async fn run_tui() -> Result<()> {
             ])
             .header(header)
             .block(Block::default().borders(Borders::ALL).title(" Agents "));
-            f.render_widget(table, chunks[1]);
-
-            // issues
-            let issue_header = Row::new(["Issue", "State", "Owner", "Title"])
-                .style(Style::default().bold());
-            let issue_rows: Vec<Row> = dashboard.issues.iter().map(|i| {
-                let style = match i.state.as_str() {
-                    "claimed" => Style::default().fg(Color::Yellow),
-                    "needs-human" => Style::default().fg(Color::Magenta),
-                    "needs-review" => Style::default().fg(Color::Cyan),
-                    "ready" => Style::default().fg(Color::Green),
-                    _ => Style::default(),
-                };
-                Row::new([
-                    format!("#{}", i.number),
-                    i.state.clone(),
-                    i.owner.clone(),
-                    i.title.clone(),
-                ]).style(style)
-            }).collect();
-            let issue_table = Table::new(issue_rows, [
-                Constraint::Length(7),
-                Constraint::Length(14),
-                Constraint::Length(10),
-                Constraint::Fill(1),
-            ])
-            .header(issue_header)
-            .block(Block::default().borders(Borders::ALL).title(" GitHub Issues "));
-            f.render_widget(issue_table, chunks[2]);
+            f.render_widget(table, chunks[3]);
 
             // help bar + status
             let help_text = match status_msg.as_str() {
@@ -237,7 +268,7 @@ async fn run_tui() -> Result<()> {
                 Style::default().fg(Color::Yellow)
             };
             let help = Paragraph::new(help_text).style(help_style);
-            f.render_widget(help, chunks[3]);
+            f.render_widget(help, chunks[4]);
         })?;
 
         // handle input
@@ -249,16 +280,22 @@ async fn run_tui() -> Result<()> {
                         KeyCode::Char('n') => {
                             status_msg = "dispatching...".to_string();
                             match crate::dispatch::run().await {
-                                Ok(_) => status_msg = "dispatch complete -- refreshing...".to_string(),
+                                Ok(log) => {
+                                    dashboard.dispatcher_log = log;
+                                    status_msg = "dispatch complete".to_string();
+                                }
                                 Err(e) => status_msg = format!("dispatch error: {e}"),
                             }
+                            // refresh pods + issues to show new state
                             if let Ok(d) = gather().await {
+                                // keep the fresh dispatch log, update everything else
+                                let disp_log = dashboard.dispatcher_log.clone();
                                 dashboard = d;
+                                dashboard.dispatcher_log = disp_log;
                             }
                             last_refresh = std::time::Instant::now();
                         }
                         KeyCode::Char('r') => {
-                            status_msg = "refreshing...".to_string();
                             if let Ok(d) = gather().await {
                                 dashboard = d;
                             }

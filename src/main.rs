@@ -41,7 +41,7 @@ enum Commands {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        Commands::Dispatch => dispatch::run().await,
+        Commands::Dispatch => dispatch::run().await.map(|_| ()),
         Commands::Top { once } => top::run(once).await,
         Commands::Logs { issue, follow } => logs::run(issue, follow).await,
         Commands::Deploy => deploy::run().await,
