@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	GroupVersion = schema.GroupVersion{Group: "k3sc.abix.dev", Version: "v1"}
+	GroupVersion  = schema.GroupVersion{Group: "k3sc.abix.dev", Version: "v1"}
 	SchemeBuilder = runtime.NewSchemeBuilder(addKnownTypes)
 	AddToScheme   = SchemeBuilder.AddToScheme
 )
@@ -21,7 +21,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 	return nil
 }
 
-// ClaudeTask represents a unit of work: one GitHub issue assigned to one agent.
+// ClaudeTask represents one execution of work on a GitHub issue.
+// Multiple ClaudeTasks can exist for the same issue (execution history).
 type ClaudeTask struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -40,24 +41,29 @@ type TaskPhase string
 
 const (
 	TaskPhasePending   TaskPhase = "Pending"   // created, waiting for slot
+	TaskPhaseAssigned  TaskPhase = "Assigned"  // slot + agent assigned, claiming on github
 	TaskPhaseRunning   TaskPhase = "Running"   // job created, pod active
-	TaskPhaseSucceeded TaskPhase = "Succeeded" // pod completed
+	TaskPhaseSucceeded TaskPhase = "Succeeded" // pod completed successfully
 	TaskPhaseFailed    TaskPhase = "Failed"    // pod failed (may retry)
-	TaskPhaseBlocked   TaskPhase = "Blocked"   // too many failures
+	TaskPhaseBlocked   TaskPhase = "Blocked"   // too many failures, needs human
 )
 
+func IsTerminal(phase TaskPhase) bool {
+	return phase == TaskPhaseSucceeded || phase == TaskPhaseFailed || phase == TaskPhaseBlocked
+}
+
 type ClaudeTaskStatus struct {
-	Phase      TaskPhase      `json:"phase,omitempty"`
-	Agent      string         `json:"agent,omitempty"`      // e.g. "claude-a"
-	Slot       int            `json:"slot,omitempty"`
-	JobName    string         `json:"jobName,omitempty"`
-	Attempts   int            `json:"attempts,omitempty"`
-	MaxRetries int            `json:"maxRetries,omitempty"`
-	LastError  string         `json:"lastError,omitempty"`
-	Reported   bool           `json:"reported,omitempty"`   // result comment posted
-	Claimed    bool           `json:"claimed,omitempty"`    // github labels set
-	StartedAt  *metav1.Time   `json:"startedAt,omitempty"`
-	FinishedAt *metav1.Time   `json:"finishedAt,omitempty"`
+	Phase      TaskPhase    `json:"phase,omitempty"`
+	Agent      string       `json:"agent,omitempty"`
+	Slot       int          `json:"slot,omitempty"`
+	JobName    string       `json:"jobName,omitempty"`
+	Attempts   int          `json:"attempts,omitempty"`
+	LastError  string       `json:"lastError,omitempty"`
+	Reported   bool         `json:"reported,omitempty"`   // result comment posted to github
+	LogTail    string       `json:"logTail,omitempty"`    // last meaningful output line
+	NextAction string       `json:"nextAction,omitempty"` // needs-review, needs-human
+	StartedAt  *metav1.Time `json:"startedAt,omitempty"`
+	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
 }
 
 // ClaudeTaskList contains a list of ClaudeTasks.

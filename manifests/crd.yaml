@@ -29,7 +29,7 @@ spec:
               properties:
                 phase:
                   type: string
-                  enum: [Pending, Running, Succeeded, Failed, Blocked]
+                  enum: [Pending, Assigned, Running, Succeeded, Failed, Blocked]
                 agent:
                   type: string
                 slot:
@@ -38,14 +38,14 @@ spec:
                   type: string
                 attempts:
                   type: integer
-                maxRetries:
-                  type: integer
                 lastError:
                   type: string
                 reported:
                   type: boolean
-                claimed:
-                  type: boolean
+                logTail:
+                  type: string
+                nextAction:
+                  type: string
                 startedAt:
                   type: string
                   format: date-time
@@ -71,6 +71,9 @@ spec:
         - name: Attempts
           type: integer
           jsonPath: .status.attempts
+        - name: Next
+          type: string
+          jsonPath: .status.nextAction
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
