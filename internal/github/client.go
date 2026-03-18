@@ -61,6 +61,17 @@ func parseIssueLabels(labels []*gh.Label) (state, owner string) {
 	return
 }
 
+// GetIssueOwner returns the owner label (e.g. "claude-a") for an issue, or "" if unclaimed.
+func GetIssueOwner(ctx context.Context, repo types.Repo, issueNumber int) (string, error) {
+	client := newClient(ctx)
+	issue, _, err := client.Issues.Get(ctx, repo.Owner, repo.Name, issueNumber)
+	if err != nil {
+		return "", fmt.Errorf("get issue %d: %w", issueNumber, err)
+	}
+	_, owner := parseIssueLabels(issue.Labels)
+	return owner, nil
+}
+
 func GetOpenPRs(ctx context.Context) ([]types.PullRequest, error) {
 	client := newClient(ctx)
 	var result []types.PullRequest
