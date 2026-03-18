@@ -17,6 +17,13 @@ import (
 
 const MaxFailures = 3
 
+var edt = time.FixedZone("EDT", -4*3600)
+
+func slog(format string, args ...any) {
+	t := time.Now().In(edt).Format("15:04:05")
+	fmt.Printf("%s [scanner] "+format+"\n", append([]any{t}, args...)...)
+}
+
 func Scanner(ctx context.Context, c client.Client, namespace string) {
 	logger := log.FromContext(ctx).WithName("scanner")
 	minInterval := config.C.Scan.MinInterval.Duration
@@ -43,7 +50,7 @@ func Scanner(ctx context.Context, c client.Client, namespace string) {
 			} else {
 				interval = nextBackoff(interval, maxInterval)
 			}
-			fmt.Printf("[scanner] next scan in %s\n", interval)
+			slog("next scan in %s", interval)
 			timer.Reset(interval)
 		}
 	}
@@ -60,13 +67,13 @@ func nextBackoff(current, max time.Duration) time.Duration {
 func scan(ctx context.Context, c client.Client, namespace string) bool {
 	eligible, err := github.GetEligibleIssues(ctx)
 	if err != nil {
-		fmt.Printf("[scanner] github error: %v\n", err)
+		slog("github error: %v", err)
 		return false
 	}
 
 	var existing AgentJobList
 	if err := c.List(ctx, &existing, client.InNamespace(namespace)); err != nil {
-		fmt.Printf("[scanner] list tasks error: %v\n", err)
+		slog("list tasks error: %v", err)
 		return false
 	}
 
@@ -94,19 +101,19 @@ func scan(ctx context.Context, c client.Client, namespace string) bool {
 			continue
 		}
 		if failCounts[key] >= MaxFailures {
-			fmt.Printf("[scanner] %s blocked after %d failures\n", key, failCounts[key])
+			slog("%s blocked after %d failures", key, failCounts[key])
 			continue
 		}
 
 		slot := dispatch.FindFreeSlotFromList(usedSlots, maxSlots)
 		if slot == -1 {
-			fmt.Printf("[scanner] no free slots\n")
+			slog("no free slots")
 			break
 		}
 
 		agent := types.AgentName(slot)
-		ts := time.Now().Unix()
-		name := fmt.Sprintf("%s-%d-%d", strings.ReplaceAll(issue.Repo.Name, "/", "-"), issue.Number, ts)
+		epoch := time.Now().Unix()
+		name := fmt.Sprintf("%s-%d-%d", strings.ReplaceAll(issue.Repo.Name, "/", "-"), issue.Number, epoch)
 
 		task := &AgentJob{
 			TypeMeta: metav1.TypeMeta{
@@ -132,10 +139,10 @@ func scan(ctx context.Context, c client.Client, namespace string) bool {
 		}
 
 		if err := c.Create(ctx, task); err != nil {
-			fmt.Printf("[scanner] create %s: %v\n", name, err)
+			slog("create %s: %v", name, err)
 			continue
 		}
-		fmt.Printf("[scanner] created %s (slot %d, %s)\n", name, slot, agent)
+		slog("created %s (slot %d, %s)", name, slot, agent)
 
 		// update in-memory state so next iteration sees this slot as used
 		usedSlots = append(usedSlots, slot)
@@ -150,9 +157,9 @@ func scan(ctx context.Context, c client.Client, namespace string) bool {
 		}
 		if time.Since(t.CreationTimestamp.Time) > config.C.Scan.TaskTTL.Duration {
 			if err := c.Delete(ctx, t); err != nil {
-				fmt.Printf("[scanner] cleanup %s: %v\n", t.Name, err)
+				slog("cleanup %s: %v", t.Name, err)
 			} else {
-				fmt.Printf("[scanner] cleaned up %s\n", t.Name)
+				slog("cleaned up %s", t.Name)
 			}
 		}
 	}

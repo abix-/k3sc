@@ -2,12 +2,16 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"time"
 
 	"github.com/abix-/k3sc/internal/dispatch"
 	"github.com/abix-/k3sc/internal/k8s"
 	"github.com/abix-/k3sc/internal/operator"
 	"github.com/abix-/k3sc/internal/types"
 	"github.com/spf13/cobra"
+	uberzap "go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -25,7 +29,33 @@ var operatorCmd = &cobra.Command{
 }
 
 func runOperator(cmd *cobra.Command, args []string) error {
-	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
+	edt := time.FixedZone("EDT", -4*3600)
+	timeEncoder := func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+		enc.AppendString(t.In(edt).Format("15:04:05"))
+	}
+	ctrl.SetLogger(zap.New(zap.UseDevMode(true), zap.RawZapOpts(
+		uberzap.WrapCore(func(c zapcore.Core) zapcore.Core {
+			// replace the encoder with one that uses EDT 24h time
+			cfg := zapcore.EncoderConfig{
+				TimeKey:        "T",
+				LevelKey:       "L",
+				NameKey:        "N",
+				CallerKey:      "",
+				MessageKey:     "M",
+				StacktraceKey:  "S",
+				LineEnding:     zapcore.DefaultLineEnding,
+				EncodeLevel:    zapcore.CapitalLevelEncoder,
+				EncodeTime:     timeEncoder,
+				EncodeDuration: zapcore.StringDurationEncoder,
+				EncodeName:     zapcore.FullNameEncoder,
+			}
+			return zapcore.NewCore(
+				zapcore.NewConsoleEncoder(cfg),
+				zapcore.Lock(zapcore.AddSync(os.Stderr)),
+				zapcore.DebugLevel,
+			)
+		}),
+	)))
 
 	scheme := runtime.NewScheme()
 	clientgoscheme.AddToScheme(scheme)
