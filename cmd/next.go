@@ -41,7 +41,7 @@ func runNext(cmd *cobra.Command, args []string) error {
 
 	var candidates []item
 	for _, i := range issues {
-		if i.State == "needs-human" || i.State == "needs-review" {
+		if i.State == "needs-human" {
 			candidates = append(candidates, item{
 				kind:  i.State,
 				repo:  i.Repo.Name,
