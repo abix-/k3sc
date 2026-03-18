@@ -17,7 +17,7 @@ func init() {
 
 var launchCmd = &cobra.Command{
 	Use:   "launch",
-	Short: "Launch claude in the next free endless-claude-N directory",
+	Short: "Launch claude in the next free claude-N directory",
 	RunE:  runLaunch,
 }
 
@@ -36,10 +36,10 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 	existing := map[int]bool{}
 	locked := map[int]bool{}
 	for _, e := range entries {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), "endless-claude-") {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "claude-") {
 			continue
 		}
-		suffix := strings.TrimPrefix(e.Name(), "endless-claude-")
+		suffix := strings.TrimPrefix(e.Name(), "claude-")
 		n, err := strconv.Atoi(suffix)
 		if err != nil {
 			continue
@@ -82,7 +82,7 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 		slot = max + 1
 	}
 
-	dir := filepath.Join(base, fmt.Sprintf("endless-claude-%d", slot))
+	dir := filepath.Join(base, fmt.Sprintf("claude-%d", slot))
 	fmt.Printf("slot %d -> %s\n", slot, dir)
 
 	// clone if directory doesn't exist
