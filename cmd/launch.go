@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/abix-/k3sc/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -24,8 +25,8 @@ var launchCmd = &cobra.Command{
 const lockFile = ".k3sc.lock"
 
 func runLaunch(cmd *cobra.Command, args []string) error {
-	base := `C:\code`
-	repoURL := "https://github.com/abix-/endless.git"
+	base := config.C.LaunchDir
+	repoURL := "https://github.com/" + config.C.Repos[0].Owner + "/" + config.C.Repos[0].Name + ".git"
 
 	// find free slot: dir exists but no lockfile, or dir doesn't exist yet
 	entries, err := os.ReadDir(base)

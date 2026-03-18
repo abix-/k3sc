@@ -2,9 +2,9 @@ package types
 
 import "time"
 
-const (
-	Namespace = "claude-agents"
-)
+// Namespace and Repos are set by config.Load() at startup.
+// Defaults here match the config defaults as a safety net.
+var Namespace = "claude-agents"
 
 type Repo struct {
 	Owner string

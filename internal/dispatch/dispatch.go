@@ -6,21 +6,20 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"github.com/abix-/k3sc/internal/config"
 	"github.com/abix-/k3sc/internal/k8s"
 	"github.com/abix-/k3sc/internal/types"
 	"k8s.io/client-go/kubernetes"
 )
 
-const DefaultMaxSlots = 5
-
-// MaxSlots returns the configured max slots from env or default.
+// MaxSlots returns the configured max slots. Env var wins over config file.
 func MaxSlots() int {
 	if v := os.Getenv("MAX_SLOTS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
 		}
 	}
-	return DefaultMaxSlots
+	return config.C.MaxSlots
 }
 
 // FindFreeSlot returns the lowest available slot (1-based), or -1 if none free.

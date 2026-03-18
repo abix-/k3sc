@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abix-/k3sc/internal/config"
 	"github.com/abix-/k3sc/internal/dispatch"
 	"github.com/abix-/k3sc/internal/github"
 	"github.com/abix-/k3sc/internal/types"
@@ -14,23 +15,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-const (
-	ScanIntervalMin = 2 * time.Minute
-	ScanIntervalMax = 1 * time.Hour
-	TaskTTL         = 24 * time.Hour
-	MaxFailures     = 3
-)
+const MaxFailures = 3
 
 func Scanner(ctx context.Context, c client.Client, namespace string) {
 	logger := log.FromContext(ctx).WithName("scanner")
-	interval := ScanIntervalMin
+	minInterval := config.C.Scan.MinInterval.Duration
+	maxInterval := config.C.Scan.MaxInterval.Duration
+	interval := minInterval
 	logger.Info("starting github scanner", "interval", interval)
 
 	hadWork := scan(ctx, c, namespace)
-	if hadWork {
-		interval = ScanIntervalMin
-	} else {
-		interval = nextBackoff(interval)
+	if !hadWork {
+		interval = nextBackoff(interval, maxInterval)
 	}
 
 	timer := time.NewTimer(interval)
@@ -43,9 +39,9 @@ func Scanner(ctx context.Context, c client.Client, namespace string) {
 		case <-timer.C:
 			hadWork = scan(ctx, c, namespace)
 			if hadWork {
-				interval = ScanIntervalMin
+				interval = minInterval
 			} else {
-				interval = nextBackoff(interval)
+				interval = nextBackoff(interval, maxInterval)
 			}
 			fmt.Printf("[scanner] next scan in %s\n", interval)
 			timer.Reset(interval)
@@ -53,10 +49,10 @@ func Scanner(ctx context.Context, c client.Client, namespace string) {
 	}
 }
 
-func nextBackoff(current time.Duration) time.Duration {
+func nextBackoff(current, max time.Duration) time.Duration {
 	next := current * 2
-	if next > ScanIntervalMax {
-		next = ScanIntervalMax
+	if next > max {
+		next = max
 	}
 	return next
 }
@@ -152,7 +148,7 @@ func scan(ctx context.Context, c client.Client, namespace string) bool {
 		if !IsTerminal(t.Status.Phase) {
 			continue
 		}
-		if time.Since(t.CreationTimestamp.Time) > TaskTTL {
+		if time.Since(t.CreationTimestamp.Time) > config.C.Scan.TaskTTL.Duration {
 			if err := c.Delete(ctx, t); err != nil {
 				fmt.Printf("[scanner] cleanup %s: %v\n", t.Name, err)
 			} else {
