@@ -15,40 +15,63 @@ import (
 )
 
 const (
-	ScanInterval = 60 * time.Second
-	TaskTTL      = 24 * time.Hour
-	MaxFailures  = 3
+	ScanIntervalMin = 2 * time.Minute
+	ScanIntervalMax = 1 * time.Hour
+	TaskTTL         = 24 * time.Hour
+	MaxFailures     = 3
 )
 
 func Scanner(ctx context.Context, c client.Client, namespace string) {
 	logger := log.FromContext(ctx).WithName("scanner")
-	logger.Info("starting github scanner", "interval", ScanInterval)
+	interval := ScanIntervalMin
+	logger.Info("starting github scanner", "interval", interval)
 
-	scan(ctx, c, namespace)
-	ticker := time.NewTicker(ScanInterval)
-	defer ticker.Stop()
+	hadWork := scan(ctx, c, namespace)
+	if hadWork {
+		interval = ScanIntervalMin
+	} else {
+		interval = nextBackoff(interval)
+	}
+
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			scan(ctx, c, namespace)
+		case <-timer.C:
+			hadWork = scan(ctx, c, namespace)
+			if hadWork {
+				interval = ScanIntervalMin
+			} else {
+				interval = nextBackoff(interval)
+			}
+			fmt.Printf("[scanner] next scan in %s\n", interval)
+			timer.Reset(interval)
 		}
 	}
 }
 
-func scan(ctx context.Context, c client.Client, namespace string) {
+func nextBackoff(current time.Duration) time.Duration {
+	next := current * 2
+	if next > ScanIntervalMax {
+		next = ScanIntervalMax
+	}
+	return next
+}
+
+func scan(ctx context.Context, c client.Client, namespace string) bool {
 	eligible, err := github.GetEligibleIssues(ctx)
 	if err != nil {
 		fmt.Printf("[scanner] github error: %v\n", err)
-		return
+		return false
 	}
 
 	var existing ClaudeTaskList
 	if err := c.List(ctx, &existing, client.InNamespace(namespace)); err != nil {
 		fmt.Printf("[scanner] list tasks error: %v\n", err)
-		return
+		return false
 	}
 
 	// build state from existing tasks
@@ -137,4 +160,6 @@ func scan(ctx context.Context, c client.Client, namespace string) {
 			}
 		}
 	}
+
+	return len(eligible) > 0
 }

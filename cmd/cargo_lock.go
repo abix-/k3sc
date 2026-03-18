@@ -79,13 +79,27 @@ func runCargoLock(cmd *cobra.Command, args []string) error {
 	cargoArgs := args
 	fmt.Fprintf(os.Stderr, "[cargo-lock] %s acquired lock, running: cargo %s\n", ts, strings.Join(cargoArgs, " "))
 
+	// "run" automatically builds first -- can't run what isn't built
+	if cargoArgs[0] == "run" {
+		buildArgs := append([]string{"build"}, cargoArgs[1:]...)
+		fmt.Fprintf(os.Stderr, "[cargo-lock] %s running: cargo %s\n", time.Now().Format("15:04:05"), strings.Join(buildArgs, " "))
+		b := exec.Command("cargo", buildArgs...)
+		b.Stdout = os.Stdout
+		b.Stderr = os.Stderr
+		if err := b.Run(); err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				os.Exit(exitErr.ExitCode())
+			}
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "[cargo-lock] %s build ok, running: cargo %s\n", time.Now().Format("15:04:05"), strings.Join(cargoArgs, " "))
+	}
+
 	c := exec.Command("cargo", cargoArgs...)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
 	c.Stdin = os.Stdin
-	err := c.Run()
-
-	if err != nil {
+	if err := c.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
