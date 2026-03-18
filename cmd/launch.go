@@ -97,10 +97,15 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// launch claude detached -- k3sc exits immediately, stale lock cleanup handles the rest
+	// launch claude in this terminal -- k3sc exits, claude takes over
 	lockPath := filepath.Join(dir, lockFile)
 
-	c := exec.Command("claude")
+	claudePath, err := exec.LookPath("claude")
+	if err != nil {
+		return fmt.Errorf("claude not found in PATH: %w", err)
+	}
+
+	c := exec.Command(claudePath)
 	c.Dir = dir
 	c.Stdin = os.Stdin
 	c.Stdout = os.Stdout
@@ -111,6 +116,7 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 	}
 
 	os.WriteFile(lockPath, []byte(strconv.Itoa(c.Process.Pid)), 0o644)
-	c.Process.Release()
+	// exit immediately -- claude keeps the console
+	os.Exit(0)
 	return nil
 }
