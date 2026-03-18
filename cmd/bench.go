@@ -126,7 +126,7 @@ func collectCriterionResults(criterionDir string) (map[string]float64, error) {
 		if err := json.Unmarshal(data, &est); err != nil {
 			return nil
 		}
-		results[key] = est.Mean.PointEstimate * 1e9 // seconds -> nanoseconds
+		results[key] = est.Mean.PointEstimate // nanoseconds (Criterion point_estimate is already ns)
 		return nil
 	})
 	if err != nil {
