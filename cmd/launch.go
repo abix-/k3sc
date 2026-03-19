@@ -17,16 +17,22 @@ func init() {
 }
 
 var launchCmd = &cobra.Command{
-	Use:   "launch",
-	Short: "Launch claude in the next free claude-N directory",
+	Use:   "launch [claude|codex]",
+	Short: "Launch claude or codex in the next free slot directory",
 	RunE:  runLaunch,
 }
 
 const lockFile = ".k3sc.lock"
 
 func runLaunch(cmd *cobra.Command, args []string) error {
+	agent := "claude"
+	if len(args) > 0 && args[0] == "codex" {
+		agent = "codex"
+	}
+
 	base := config.C.LaunchDir
 	repoURL := "https://github.com/" + config.C.Repos[0].Owner + "/" + config.C.Repos[0].Name + ".git"
+	prefix := agent + "-"
 
 	// find free slot: dir exists but no lockfile, or dir doesn't exist yet
 	entries, err := os.ReadDir(base)
@@ -37,10 +43,10 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 	existing := map[int]bool{}
 	locked := map[int]bool{}
 	for _, e := range entries {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), "claude-") {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), prefix) {
 			continue
 		}
-		suffix := strings.TrimPrefix(e.Name(), "claude-")
+		suffix := strings.TrimPrefix(e.Name(), prefix)
 		n, err := strconv.Atoi(suffix)
 		if err != nil {
 			continue
@@ -83,8 +89,8 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 		slot = max + 1
 	}
 
-	dir := filepath.Join(base, fmt.Sprintf("claude-%d", slot))
-	fmt.Printf("slot %d -> %s\n", slot, dir)
+	dir := filepath.Join(base, fmt.Sprintf("%s%d", prefix, slot))
+	fmt.Printf("%s slot %d -> %s\n", agent, slot, dir)
 
 	// clone if directory doesn't exist
 	if _, err := os.Stat(filepath.Join(dir, ".git")); os.IsNotExist(err) {
@@ -99,7 +105,7 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 
 	lockPath := filepath.Join(dir, lockFile)
 
-	c := exec.Command("wezterm", "start", "--cwd", dir, "--", "claude")
+	c := exec.Command("wezterm", "start", "--cwd", dir, "--", agent)
 	if err := c.Start(); err != nil {
 		return fmt.Errorf("wezterm: %w", err)
 	}
