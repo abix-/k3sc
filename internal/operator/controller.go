@@ -132,7 +132,6 @@ func (r *Reconciler) handleRunning(ctx context.Context, task *AgentJob) (ctrl.Re
 		now := metav1.Now()
 		task.Status.Phase = TaskPhaseSucceeded
 		task.Status.FinishedAt = &now
-		r.captureLogTail(ctx, task)
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
@@ -141,7 +140,6 @@ func (r *Reconciler) handleRunning(ctx context.Context, task *AgentJob) (ctrl.Re
 		task.Status.Phase = TaskPhaseFailed
 		task.Status.FinishedAt = &now
 		task.Status.LastError = "pod failed"
-		r.captureLogTail(ctx, task)
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
@@ -164,12 +162,6 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *AgentJob) (ctrl.
 
 	body := fmt.Sprintf("## k3sc operator\n- Agent: %s\n- Status: %s%s",
 		task.Status.Agent, status, duration)
-	if task.Status.LogTail != "" {
-		body += fmt.Sprintf("\n\n```\n%s\n```", task.Status.LogTail)
-	}
-	if task.Status.LastError != "" {
-		body += fmt.Sprintf("\n\nError: %s", task.Status.LastError)
-	}
 	github.PostComment(ctx, repo, task.Spec.IssueNumber, body)
 
 	if succeeded {
@@ -202,14 +194,6 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *AgentJob) (ctrl.
 	}
 
 	return ctrl.Result{}, r.Status().Update(ctx, task)
-}
-
-func (r *Reconciler) captureLogTail(ctx context.Context, task *AgentJob) {
-	podName, _ := k8s.FindPodForIssue(ctx, r.K8s, task.Spec.IssueNumber)
-	if podName != "" {
-		tail, _ := k8s.GetPodLogTail(ctx, r.K8s, podName, 20)
-		task.Status.LogTail = tail
-	}
 }
 
 func isJobDead(job *batchv1.Job) bool {
