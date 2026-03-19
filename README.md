@@ -110,11 +110,12 @@ go build -o k3sc.exe .
 # cross-compile linux binary for container
 GOOS=linux GOARCH=amd64 go build -o image/k3sc .
 
-# create namespace + secrets (one-time)
+# ensure local auth files exist:
+# - ~/.gh-token
+# - ~/.claude/.credentials.json
+#
+# deploy will create/update the k8s claude-secrets secret from those files
 sudo k3s kubectl apply -f manifests/namespace.yaml
-sudo k3s kubectl create secret generic claude-secrets -n claude-agents \
-  --from-literal=CLAUDE_CODE_OAUTH_TOKEN=<token> \
-  --from-literal=GITHUB_TOKEN=<token>
 
 # deploy (builds image, applies manifests)
 k3sc deploy

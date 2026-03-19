@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -44,13 +45,17 @@ func runCmdEnv(desc string, env []string, name string, args ...string) error {
 	return c.Run()
 }
 
-func ensureSecret(kubectl string) error {
+func ensureSecret() error {
 	// check if secret already exists with all keys
-	checkCmd := fmt.Sprintf("%s get secret claude-secrets -n claude-agents -o jsonpath='{.data}' 2>/dev/null", kubectl)
-	c := exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", checkCmd)
+	c := exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "sudo", "k3s", "kubectl",
+		"get", "secret", "claude-secrets", "-n", "claude-agents", "-o", "json")
 	if out, err := c.Output(); err == nil {
-		s := string(out)
-		if strings.Contains(s, "GITHUB_TOKEN") && strings.Contains(s, "CLAUDE_CODE_OAUTH_TOKEN") {
+		var secret struct {
+			Data map[string]string `json:"data"`
+		}
+		if err := json.Unmarshal(out, &secret); err == nil &&
+			secret.Data["GITHUB_TOKEN"] != "" &&
+			secret.Data["CLAUDE_CODE_OAUTH_TOKEN"] != "" {
 			fmt.Println("=== secret claude-secrets exists with all keys, skipping ===")
 			return nil
 		}
@@ -65,7 +70,7 @@ func ensureSecret(kubectl string) error {
 	ghTokenBytes, err := os.ReadFile(filepath.Join(home, ".gh-token"))
 	if err != nil {
 		fmt.Println("=== WARNING: no ~/.gh-token found ===")
-		fmt.Println("  Create manually: kubectl create secret generic claude-secrets -n claude-agents --from-literal=GITHUB_TOKEN=<token> --from-literal=CLAUDE_CODE_OAUTH_TOKEN=<token>")
+		fmt.Println("  Create claude-secrets manually, but do not put tokens directly on a shell command line")
 		return nil
 	}
 	ghToken := strings.TrimSpace(string(ghTokenBytes))
@@ -88,15 +93,27 @@ func ensureSecret(kubectl string) error {
 		return nil
 	}
 
-	// delete existing (may have partial keys) and recreate
-	delCmd := fmt.Sprintf("%s delete secret claude-secrets -n claude-agents --ignore-not-found", kubectl)
-	exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", delCmd).Run()
+	manifest, err := json.Marshal(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata": map[string]any{
+			"name":      "claude-secrets",
+			"namespace": "claude-agents",
+		},
+		"type": "Opaque",
+		"stringData": map[string]string{
+			"GITHUB_TOKEN":            ghToken,
+			"CLAUDE_CODE_OAUTH_TOKEN": creds.ClaudeAiOauth.AccessToken,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("marshal secret manifest: %w", err)
+	}
 
-	// run without runCmd to avoid printing tokens
-	fmt.Println("=== creating secret from ~/.gh-token + ~/.claude/.credentials.json ===")
-	createCmd := fmt.Sprintf("%s create secret generic claude-secrets -n claude-agents --from-literal=GITHUB_TOKEN=%s --from-literal=CLAUDE_CODE_OAUTH_TOKEN=%s",
-		kubectl, ghToken, creds.ClaudeAiOauth.AccessToken)
-	cr := exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", createCmd)
+	// Apply via stdin so tokens never appear in shell or process args.
+	fmt.Println("=== applying secret from ~/.gh-token + ~/.claude/.credentials.json ===")
+	cr := exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "sudo", "k3s", "kubectl", "apply", "-f", "-")
+	cr.Stdin = bytes.NewReader(manifest)
 	cr.Stdout = os.Stdout
 	cr.Stderr = os.Stderr
 	return cr.Run()
@@ -189,7 +206,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	// secret: don't overwrite if it exists (template has placeholder values)
-	if err := ensureSecret(kubectl); err != nil {
+	if err := ensureSecret(); err != nil {
 		return err
 	}
 
