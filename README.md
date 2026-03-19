@@ -70,6 +70,8 @@ repos:                       # repos to scan for issues
     name: endless
   - owner: abix-
     name: k3sc
+allowed_authors:            # only these issue authors may dispatch agent jobs
+  - abix-
 scan:
   min_interval: 2m           # fastest scan rate
   max_interval: 1h           # backoff cap when idle
@@ -89,7 +91,7 @@ Issues are routed through a state machine via GitHub labels:
 | `needs-review` | Implementation done, needs another agent to review |
 | `needs-human` | Requires human action (merge, design decision) |
 
-The scanner only picks up `ready` and `needs-review` issues (prioritizing `needs-review`).
+The scanner only picks up `ready` and `needs-review` issues from configured repos, and only when the issue author is in `allowed_authors` (prioritizing `needs-review`).
 
 ## Prerequisites
 

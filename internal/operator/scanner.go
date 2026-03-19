@@ -145,6 +145,11 @@ func scan(ctx context.Context, c client.Client, cs *kubernetes.Clientset, namesp
 
 	// create tasks one at a time, updating usedSlots after each
 	for _, issue := range eligible {
+		if reason := github.DispatchTrustReason(issue); reason != "" {
+			olog("scanner", "skip %s#%d: %s", issue.Repo.Name, issue.Number, reason)
+			continue
+		}
+
 		key := fmt.Sprintf("%s-%d", issue.Repo.Name, issue.Number)
 		if activeIssues[key] {
 			continue

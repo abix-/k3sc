@@ -145,7 +145,7 @@ func runDispatchInner() (string, error) {
 	for _, i := range eligible {
 		nums = append(nums, fmt.Sprintf("%s#%d", i.Repo.Name, i.Number))
 	}
-	log = append(log, fmt.Sprintf("[dispatcher] eligible issues: %s", strings.Join(nums, " ")))
+	log = append(log, fmt.Sprintf("[dispatcher] workflow-labeled issues: %s", strings.Join(nums, " ")))
 
 	activeSlots, err := k8s.GetActiveSlots(ctx, cs)
 	if err != nil {
@@ -165,6 +165,11 @@ func runDispatchInner() (string, error) {
 
 	created := 0
 	for _, issue := range eligible {
+		if reason := github.DispatchTrustReason(issue); reason != "" {
+			log = append(log, fmt.Sprintf("[dispatcher] skipping %s#%d: %s", issue.Repo.Name, issue.Number, reason))
+			continue
+		}
+
 		if len(activeSlots) >= maxSlots {
 			log = append(log, fmt.Sprintf("[dispatcher] at max capacity (%d), stopping", maxSlots))
 			break

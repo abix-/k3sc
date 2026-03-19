@@ -3,6 +3,8 @@ package github
 import (
 	"testing"
 
+	"github.com/abix-/k3sc/internal/config"
+	"github.com/abix-/k3sc/internal/types"
 	gh "github.com/google/go-github/v68/github"
 )
 
@@ -67,5 +69,57 @@ func TestIsK3sAgent(t *testing.T) {
 		if got := isK3sAgent(tc.owner); got != tc.want {
 			t.Errorf("isK3sAgent(%q) = %v, want %v", tc.owner, got, tc.want)
 		}
+	}
+}
+
+func TestDispatchTrustReason(t *testing.T) {
+	prev := config.C
+	config.C = config.Config{
+		Repos: []config.RepoConfig{
+			{Owner: "abix-", Name: "endless"},
+			{Owner: "abix-", Name: "k3sc"},
+		},
+		AllowedAuthors: []string{"abix-"},
+	}
+	t.Cleanup(func() { config.C = prev })
+
+	tests := []struct {
+		name    string
+		issue   types.Issue
+		trusted bool
+	}{
+		{
+			name: "allowed repo and allowed author",
+			issue: types.Issue{
+				Repo:   types.Repo{Owner: "abix-", Name: "endless"},
+				Author: "abix-",
+			},
+			trusted: true,
+		},
+		{
+			name: "allowed repo but untrusted author",
+			issue: types.Issue{
+				Repo:   types.Repo{Owner: "abix-", Name: "endless"},
+				Author: "random-user",
+			},
+			trusted: false,
+		},
+		{
+			name: "untrusted repo",
+			issue: types.Issue{
+				Repo:   types.Repo{Owner: "someone", Name: "else"},
+				Author: "abix-",
+			},
+			trusted: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := IsDispatchTrustedIssue(tc.issue)
+			if got != tc.trusted {
+				t.Fatalf("IsDispatchTrustedIssue() = %v, want %v (reason=%q)", got, tc.trusted, DispatchTrustReason(tc.issue))
+			}
+		})
 	}
 }

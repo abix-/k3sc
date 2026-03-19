@@ -95,16 +95,16 @@ func RepoByName(name string) Repo {
 
 // TaskInfo is a TUI-friendly view of an AgentJob CR.
 type TaskInfo struct {
-	Name     string
-	Repo     Repo
-	Issue    int
-	Phase    string // Pending, Running, Succeeded, Failed, Blocked
-	Agent    string
-	Slot     int
+	Name       string
+	Repo       Repo
+	Issue      int
+	Phase      string // Pending, Running, Succeeded, Failed, Blocked
+	Agent      string
+	Slot       int
 	NextAction string
-	Started  *time.Time
-	Finished *time.Time
-	LogTail  string
+	Started    *time.Time
+	Finished   *time.Time
+	LogTail    string
 }
 
 func (t TaskInfo) PhaseOrder() int {
@@ -125,6 +125,7 @@ func (t TaskInfo) PhaseOrder() int {
 type Issue struct {
 	Number    int
 	Title     string
+	Author    string
 	State     string
 	Owner     string
 	Repo      Repo
@@ -139,4 +140,3 @@ type PullRequest struct {
 	Issue  int // linked issue number (from branch name issue-N)
 	Repo   Repo
 }
-

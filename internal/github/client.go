@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/abix-/k3sc/internal/config"
 	"github.com/abix-/k3sc/internal/types"
 	gh "github.com/google/go-github/v68/github"
 	"golang.org/x/oauth2"
@@ -149,6 +150,7 @@ func GetAllOpenIssues(ctx context.Context) ([]types.Issue, error) {
 			result = append(result, types.Issue{
 				Number:    i.GetNumber(),
 				Title:     i.GetTitle(),
+				Author:    i.GetUser().GetLogin(),
 				State:     state,
 				Owner:     owner,
 				Repo:      repo,
@@ -251,7 +253,6 @@ func GetOwnedIssues(ctx context.Context) ([]types.Issue, error) {
 	return result, nil
 }
 
-
 // HasOpenPR checks if there's an open PR for a given issue-N branch.
 func HasOpenPR(ctx context.Context, repo types.Repo, issueNumber int) (bool, error) {
 	client := newClient(ctx)
@@ -276,6 +277,38 @@ func PostComment(ctx context.Context, repo types.Repo, issueNumber int, body str
 
 func GetWorkflowIssues(ctx context.Context) ([]types.Issue, error) {
 	return GetAllOpenIssues(ctx)
+}
+
+func IsDispatchTrustedIssue(issue types.Issue) bool {
+	return DispatchTrustReason(issue) == ""
+}
+
+func DispatchTrustReason(issue types.Issue) string {
+	if !isAllowedRepo(issue.Repo) {
+		return fmt.Sprintf("repo %s/%s is not allowlisted", issue.Repo.Owner, issue.Repo.Name)
+	}
+	if !isAllowedAuthor(issue.Author) {
+		return fmt.Sprintf("author %q is not allowlisted", issue.Author)
+	}
+	return ""
+}
+
+func isAllowedRepo(repo types.Repo) bool {
+	for _, allowed := range config.C.Repos {
+		if strings.EqualFold(allowed.Owner, repo.Owner) && strings.EqualFold(allowed.Name, repo.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func isAllowedAuthor(author string) bool {
+	for _, allowed := range config.C.AllowedAuthors {
+		if strings.EqualFold(allowed, author) {
+			return true
+		}
+	}
+	return false
 }
 
 func GetEligibleIssues(ctx context.Context) ([]types.Issue, error) {

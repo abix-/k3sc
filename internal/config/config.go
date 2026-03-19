@@ -14,11 +14,12 @@ import (
 var C Config
 
 type Config struct {
-	Namespace string       `json:"namespace"`
-	MaxSlots  int          `json:"max_slots"`
-	LaunchDir string       `json:"launch_dir"`
-	Repos     []RepoConfig `json:"repos"`
-	Scan      ScanConfig   `json:"scan"`
+	Namespace      string       `json:"namespace"`
+	MaxSlots       int          `json:"max_slots"`
+	LaunchDir      string       `json:"launch_dir"`
+	Repos          []RepoConfig `json:"repos"`
+	AllowedAuthors []string     `json:"allowed_authors"`
+	Scan           ScanConfig   `json:"scan"`
 }
 
 type RepoConfig struct {
@@ -58,9 +59,10 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 
 func defaults() Config {
 	return Config{
-		Namespace: "claude-agents",
-		MaxSlots:  5,
-		LaunchDir: launchDirDefault(),
+		Namespace:      "claude-agents",
+		MaxSlots:       5,
+		LaunchDir:      launchDirDefault(),
+		AllowedAuthors: []string{"abix-"},
 		Repos: []RepoConfig{
 			{Owner: "abix-", Name: "endless"},
 			{Owner: "abix-", Name: "k3sc"},
@@ -112,6 +114,9 @@ func Load() {
 	}
 	if len(file.Repos) > 0 {
 		C.Repos = file.Repos
+	}
+	if len(file.AllowedAuthors) > 0 {
+		C.AllowedAuthors = file.AllowedAuthors
 	}
 	if file.Scan.MinInterval.Duration != 0 {
 		C.Scan.MinInterval = file.Scan.MinInterval
