@@ -71,12 +71,12 @@ var topCmd = &cobra.Command{
 }
 
 type dashboard struct {
-	nodeName      string
-	nodeVersion   string
-	pods          []types.AgentPod
-	tasks         []types.TaskInfo
-	issues        []types.Issue
-	prs           []types.PullRequest
+	nodeName    string
+	nodeVersion string
+	pods        []types.AgentPod
+	tasks       []types.TaskInfo
+	issues      []types.Issue
+	prs         []types.PullRequest
 	operatorLog string
 }
 
@@ -158,30 +158,45 @@ func gather(cs *kubernetes.Clientset) (*dashboard, error) {
 	}()
 	wg.Wait()
 
-	// fetch log tails only for running/pending pods
-	var lwg sync.WaitGroup
+	return &dashboard{
+		nodeName:    nodeName,
+		nodeVersion: nodeVersion,
+		pods:        pods,
+		tasks:       tasks,
+		issues:      issues,
+		prs:         prs,
+		operatorLog: dispLog,
+	}, nil
+}
+
+func hydratePodLogTails(ctx context.Context, cs *kubernetes.Clientset, pods []types.AgentPod) {
+	var wg sync.WaitGroup
 	for i := range pods {
 		if pods[i].Phase != types.PhaseRunning && pods[i].Phase != types.PhasePending {
 			continue
 		}
-		lwg.Add(1)
+		wg.Add(1)
 		go func(idx int) {
-			defer lwg.Done()
+			defer wg.Done()
 			tail, _ := k8s.GetPodLogTail(ctx, cs, pods[idx].Name, 20)
 			pods[idx].LogTail = tail
 		}(i)
 	}
-	lwg.Wait()
+	wg.Wait()
+}
 
-	return &dashboard{
-		nodeName:      nodeName,
-		nodeVersion:   nodeVersion,
-		pods:          pods,
-		tasks:         tasks,
-		issues:        issues,
-		prs:           prs,
-		operatorLog: dispLog,
-	}, nil
+func applyLiveLogTails(pods []types.AgentPod, liveLogs []tui.LiveLog) {
+	tailsByPod := make(map[string]string, len(liveLogs))
+	for _, log := range liveLogs {
+		tailsByPod[log.PodName] = log.Tail
+	}
+	for i := range pods {
+		if tail, ok := tailsByPod[pods[i].Name]; ok {
+			pods[i].LogTail = tail
+		} else if pods[i].Phase == types.PhaseRunning {
+			pods[i].LogTail = ""
+		}
+	}
 }
 
 func printDashboard(d *dashboard) {
@@ -242,6 +257,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return err
 		}
+		hydratePodLogTails(context.Background(), cs, d.pods)
 		printDashboard(d)
 		return nil
 	}
@@ -261,6 +277,8 @@ func runTop(cmd *cobra.Command, args []string) error {
 			return nil, err
 		}
 		streamer.Sync(d.pods)
+		liveLogs := streamer.Snapshot()
+		applyLiveLogTails(d.pods, liveLogs)
 		return &tui.Data{
 			NodeName:    d.nodeName,
 			NodeVersion: d.nodeVersion,
@@ -269,7 +287,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 			Issues:      d.issues,
 			PRs:         d.prs,
 			OperatorLog: d.operatorLog,
-			LiveLogs:    streamer.Snapshot(),
+			LiveLogs:    liveLogs,
 		}, nil
 	}
 
@@ -299,23 +317,10 @@ func runTop(cmd *cobra.Command, args []string) error {
 		}()
 		wg2.Wait()
 
-		// fetch log tails for dashboard display
-		var lwg sync.WaitGroup
-		for i := range pods {
-			if pods[i].Phase != types.PhaseRunning && pods[i].Phase != types.PhasePending {
-				continue
-			}
-			lwg.Add(1)
-			go func(idx int) {
-				defer lwg.Done()
-				tail, _ := k8s.GetPodLogTail(ctx, cs, pods[idx].Name, 20)
-				pods[idx].LogTail = tail
-			}(i)
-		}
-		lwg.Wait()
-
 		// sync streaming logs
 		streamer.Sync(pods)
+		liveLogs := streamer.Snapshot()
+		applyLiveLogTails(pods, liveLogs)
 		tasks, _ := k8s.GetAgentJobs(ctx)
 
 		return &tui.Data{
@@ -326,7 +331,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 			Issues:      current.Issues,
 			PRs:         current.PRs,
 			OperatorLog: dispLog,
-			LiveLogs:    streamer.Snapshot(),
+			LiveLogs:    liveLogs,
 		}, nil
 	}
 

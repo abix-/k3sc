@@ -5,6 +5,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/abix-/k3sc/internal/types"
 	corev1 "k8s.io/api/core/v1"
@@ -15,7 +16,13 @@ const maxLogLines = 8
 
 const maxScanBuffer = 1 << 20 // 1 MB -- handles long tool/log lines
 
+const (
+	initialReconnectDelay = 500 * time.Millisecond
+	maxReconnectDelay     = 5 * time.Second
+)
+
 type podStream struct {
+	podName  string
 	agent    string
 	issue    int
 	mu       sync.Mutex
@@ -82,6 +89,37 @@ func NewLogStreamer(cs *kubernetes.Clientset, ns string) *LogStreamer {
 	}
 }
 
+func nextReconnectDelay(current time.Duration) time.Duration {
+	if current <= 0 {
+		return initialReconnectDelay
+	}
+	next := current * 2
+	if next > maxReconnectDelay {
+		return maxReconnectDelay
+	}
+	return next
+}
+
+func logOptions(initialAttach bool) corev1.PodLogOptions {
+	opts := corev1.PodLogOptions{Follow: true}
+	if initialAttach {
+		lines := int64(maxLogLines)
+		opts.TailLines = &lines
+	}
+	return opts
+}
+
+func waitForReconnect(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 // Sync starts streams for new running pods and stops streams for gone pods.
 func (ls *LogStreamer) Sync(pods []types.AgentPod) {
 	ls.mu.Lock()
@@ -115,10 +153,11 @@ func (ls *LogStreamer) Sync(pods []types.AgentPod) {
 	for _, pod := range toStart {
 		ctx, cancel := context.WithCancel(context.Background())
 		ps := &podStream{
-			agent:  types.AgentName(pod.Family, pod.Slot),
-			issue:  pod.Issue,
-			cancel: cancel,
-			done:   make(chan struct{}),
+			podName: pod.Name,
+			agent:   types.AgentName(pod.Family, pod.Slot),
+			issue:   pod.Issue,
+			cancel:  cancel,
+			done:    make(chan struct{}),
 		}
 		ls.streams[pod.Name] = ps
 		go ls.follow(ctx, pod.Name, ps)
@@ -135,6 +174,8 @@ func (ls *LogStreamer) Sync(pods []types.AgentPod) {
 func (ls *LogStreamer) follow(ctx context.Context, podName string, ps *podStream) {
 	defer close(ps.done)
 
+	reconnectDelay := initialReconnectDelay
+	initialAttach := true
 	for {
 		select {
 		case <-ctx.Done():
@@ -142,15 +183,18 @@ func (ls *LogStreamer) follow(ctx context.Context, podName string, ps *podStream
 		default:
 		}
 
-		var tailLines int64 = maxLogLines
-		req := ls.cs.CoreV1().Pods(ls.ns).GetLogs(podName, &corev1.PodLogOptions{
-			Follow:    true,
-			TailLines: &tailLines,
-		})
+		opts := logOptions(initialAttach)
+		req := ls.cs.CoreV1().Pods(ls.ns).GetLogs(podName, &opts)
 		stream, err := req.Stream(ctx)
 		if err != nil {
-			return // pod gone or ctx cancelled
+			if !waitForReconnect(ctx, reconnectDelay) {
+				return
+			}
+			reconnectDelay = nextReconnectDelay(reconnectDelay)
+			continue
 		}
+		initialAttach = false
+		reconnectDelay = initialReconnectDelay
 
 		scanner := bufio.NewScanner(stream)
 		scanner.Buffer(make([]byte, 0, maxScanBuffer), maxScanBuffer)
@@ -167,7 +211,20 @@ func (ls *LogStreamer) follow(ctx context.Context, podName string, ps *podStream
 			}
 		}
 		stream.Close()
+		if ctx.Err() != nil {
+			return
+		}
+		if scanner.Err() != nil {
+			if !waitForReconnect(ctx, reconnectDelay) {
+				return
+			}
+			reconnectDelay = nextReconnectDelay(reconnectDelay)
+			continue
+		}
 		// stream ended (EOF) -- reconnect unless cancelled
+		if !waitForReconnect(ctx, reconnectDelay) {
+			return
+		}
 	}
 }
 
@@ -180,10 +237,11 @@ func (ls *LogStreamer) Snapshot() []LiveLog {
 	for _, ps := range ls.streams {
 		lines, tail := ps.snapshot()
 		result = append(result, LiveLog{
-			Issue: ps.issue,
-			Agent: ps.agent,
-			Lines: lines,
-			Tail:  tail,
+			PodName: ps.podName,
+			Issue:   ps.issue,
+			Agent:   ps.agent,
+			Lines:   lines,
+			Tail:    tail,
 		})
 	}
 	sort.Slice(result, func(i, j int) bool {

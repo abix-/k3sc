@@ -50,7 +50,7 @@ func ensureSecret(kubectl string) error {
 	c := exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", checkCmd)
 	if out, err := c.Output(); err == nil {
 		s := string(out)
-		if strings.Contains(s, "GITHUB_TOKEN") && strings.Contains(s, "CLAUDE_CODE_OAUTH_TOKEN") && strings.Contains(s, "OPENAI_API_KEY") {
+		if strings.Contains(s, "GITHUB_TOKEN") && strings.Contains(s, "CLAUDE_CODE_OAUTH_TOKEN") {
 			fmt.Println("=== secret claude-secrets exists with all keys, skipping ===")
 			return nil
 		}
@@ -88,29 +88,14 @@ func ensureSecret(kubectl string) error {
 		return nil
 	}
 
-	// read OpenAI API key from ~/.codex/auth.json
-	codexAuthPath := filepath.Join(home, ".codex", "auth.json")
-	var openaiKey string
-	if codexAuthBytes, err := os.ReadFile(codexAuthPath); err == nil {
-		var codexAuth struct {
-			OpenAIAPIKey string `json:"OPENAI_API_KEY"`
-		}
-		if err := json.Unmarshal(codexAuthBytes, &codexAuth); err == nil && codexAuth.OpenAIAPIKey != "" {
-			openaiKey = codexAuth.OpenAIAPIKey
-		}
-	}
-	if openaiKey == "" {
-		fmt.Println("=== WARNING: no OPENAI_API_KEY in ~/.codex/auth.json -- codex agents will not work ===")
-	}
-
 	// delete existing (may have partial keys) and recreate
 	delCmd := fmt.Sprintf("%s delete secret claude-secrets -n claude-agents --ignore-not-found", kubectl)
 	exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", delCmd).Run()
 
 	// run without runCmd to avoid printing tokens
-	fmt.Println("=== creating secret from ~/.gh-token + ~/.claude/.credentials.json + ~/.codex/auth.json ===")
-	createCmd := fmt.Sprintf("%s create secret generic claude-secrets -n claude-agents --from-literal=GITHUB_TOKEN=%s --from-literal=CLAUDE_CODE_OAUTH_TOKEN=%s --from-literal=OPENAI_API_KEY=%s",
-		kubectl, ghToken, creds.ClaudeAiOauth.AccessToken, openaiKey)
+	fmt.Println("=== creating secret from ~/.gh-token + ~/.claude/.credentials.json ===")
+	createCmd := fmt.Sprintf("%s create secret generic claude-secrets -n claude-agents --from-literal=GITHUB_TOKEN=%s --from-literal=CLAUDE_CODE_OAUTH_TOKEN=%s",
+		kubectl, ghToken, creds.ClaudeAiOauth.AccessToken)
 	cr := exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", createCmd)
 	cr.Stdout = os.Stdout
 	cr.Stderr = os.Stderr

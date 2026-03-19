@@ -13,21 +13,22 @@ import (
 )
 
 type LiveLog struct {
-	Issue int
-	Agent string
-	Lines []string
-	Tail  string // cached last meaningful line (O(1) for dashboard)
+	PodName string
+	Issue   int
+	Agent   string
+	Lines   []string
+	Tail    string // cached last meaningful line (O(1) for dashboard)
 }
 
 type Data struct {
-	NodeName      string
-	NodeVersion   string
-	Pods          []types.AgentPod
-	Tasks         []types.TaskInfo
-	Issues        []types.Issue
-	PRs           []types.PullRequest
+	NodeName    string
+	NodeVersion string
+	Pods        []types.AgentPod
+	Tasks       []types.TaskInfo
+	Issues      []types.Issue
+	PRs         []types.PullRequest
 	OperatorLog string
-	LiveLogs      []LiveLog
+	LiveLogs    []LiveLog
 }
 
 type GatherFunc func() (*Data, error)

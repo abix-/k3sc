@@ -46,12 +46,6 @@ spec:
                   name: claude-secrets
                   key: CLAUDE_CODE_OAUTH_TOKEN
                   optional: true
-            - name: OPENAI_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: claude-secrets
-                  key: OPENAI_API_KEY
-                  optional: true
           volumeMounts:
             - name: cargo-target
               mountPath: /cargo-target
@@ -73,6 +67,9 @@ spec:
               readOnly: true
             - name: gh-token
               mountPath: /home/claude/.gh-token
+              readOnly: true
+            - name: codex-auth
+              mountPath: /home/claude/.codex/auth.json
               readOnly: true
       volumes:
         - name: cargo-target
@@ -103,4 +100,8 @@ spec:
         - name: gh-token
           hostPath:
             path: /mnt/c/Users/Abix/.gh-token
+            type: File
+        - name: codex-auth
+          hostPath:
+            path: /mnt/c/Users/Abix/.codex/auth.json
             type: File
