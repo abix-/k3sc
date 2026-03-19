@@ -52,7 +52,6 @@ type Model struct {
 	maxSlots     int
 	paused       bool
 	showOperator bool
-	showLive     bool
 	showErrors   bool
 	logView      bool // full-screen live log view
 	width        int
@@ -69,7 +68,6 @@ func NewModel(gatherFn GatherFunc, k8sGatherFn K8sGatherFunc, dispatchFn Dispatc
 		errorLines:   errorLines,
 		maxSlots:     maxSlots,
 		showOperator: true,
-		showLive:     true,
 	}
 }
 
@@ -120,9 +118,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showOperator = !m.showOperator
 		case "e":
 			m.showErrors = !m.showErrors
-		case "l":
-			m.showLive = !m.showLive
-		case "tab", "L":
+		case "l", "tab":
 			m.logView = !m.logView
 		case "r":
 			m.statusMsg = "refreshing..."
@@ -288,7 +284,7 @@ func (m Model) renderLogView() string {
 		}
 	}
 
-	sections = append(sections, dim.Render(" tab/L: dashboard  q: quit  r: refresh"))
+	sections = append(sections, dim.Render(" l: dashboard  q: quit  r: refresh"))
 
 	return strings.Join(sections, "\n")
 }
@@ -464,23 +460,6 @@ func (m Model) renderView(maxVisiblePods int) string {
 		sections = append(sections, strings.Join(taskLines, "\n"))
 	}
 
-	// -- live output (only if agents are running, max 10 lines total) --
-	if m.showLive && len(d.LiveLogs) > 0 {
-		var liveLines []string
-		for _, ll := range d.LiveLogs {
-			liveLines = append(liveLines, titleFg.Render(fmt.Sprintf(" -- %s (issue #%d) --", ll.Agent, ll.Issue)))
-			for _, line := range ll.Lines {
-				liveLines = append(liveLines, green.Render("  "+format.Truncate(line, w-6)))
-			}
-		}
-		if len(liveLines) > 10 {
-			liveLines = liveLines[len(liveLines)-10:]
-		}
-		sections = append(sections, sep)
-		sections = append(sections, titleFg.Render(" Live Output"))
-		sections = append(sections, strings.Join(liveLines, "\n"))
-	}
-
 	// -- pull requests --
 	var prLines []string
 	if len(d.PRs) == 0 {
@@ -522,7 +501,7 @@ func (m Model) renderView(maxVisiblePods int) string {
 	if m.statusMsg != "" {
 		sections = append(sections, yellow.Render(" "+m.statusMsg))
 	}
-	sections = append(sections, dim.Render(" q: quit  n: dispatch  p: pause  d: operator  e: errors  l: live  tab/L: logs  r: refresh  +/-: agents  1-6: copy /review"))
+	sections = append(sections, dim.Render(" q: quit  n: dispatch  p: pause  d: operator  e: errors  l: logs  r: refresh  +/-: agents  1-6: copy /review"))
 
 	return strings.Join(sections, "\n")
 }
