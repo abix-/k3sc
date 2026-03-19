@@ -206,16 +206,20 @@ func GetAgentPods(ctx context.Context, cs *kubernetes.Clientset) ([]types.AgentP
 	return result, nil
 }
 
-// HasJobForIssue returns true if any k8s Job exists for the given issue number,
-// regardless of whether it's active, succeeded, or failed.
-func HasJobForIssue(ctx context.Context, cs *kubernetes.Clientset, issue int) (bool, error) {
-	jobs, err := cs.BatchV1().Jobs(types.Namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: fmt.Sprintf("app=claude-agent,issue-number=%d", issue),
-	})
+// HasAgentJobForIssue returns true if a non-terminal AgentJob CRD exists for the issue.
+// Only checks the operator's own state, not raw k8s batch Jobs.
+func HasAgentJobForIssue(ctx context.Context, issue int) (bool, error) {
+	jobs, err := GetAgentJobs(ctx)
 	if err != nil {
 		return false, err
 	}
-	return len(jobs.Items) > 0, nil
+	terminalPhases := map[string]bool{"Succeeded": true, "Failed": true, "Blocked": true}
+	for _, j := range jobs {
+		if j.Issue == issue && !terminalPhases[j.Phase] {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func GetActiveSlots(ctx context.Context, cs *kubernetes.Clientset) ([]int, error) {

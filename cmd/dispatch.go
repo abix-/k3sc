@@ -113,7 +113,7 @@ func runDispatchInner() (string, error) {
 				}
 				// check if a k8s job exists -- if so, the operator controller
 				// will handle the state transition; don't race it
-				if hasJob, err := k8s.HasJobForIssue(ctx, cs, issue.Number); err == nil && hasJob {
+				if hasJob, err := k8s.HasAgentJobForIssue(ctx, issue.Number); err == nil && hasJob {
 					log = append(log, fmt.Sprintf("[dispatcher] %s#%d owned by %s: no active pod but job exists, deferring to controller", issue.Repo.Name, issue.Number, issue.Owner))
 					continue
 				}

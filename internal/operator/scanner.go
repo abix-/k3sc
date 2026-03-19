@@ -215,7 +215,7 @@ func orphanCleanup(ctx context.Context, cs *kubernetes.Clientset) {
 			continue
 		}
 		// job exists = controller will handle the transition
-		if hasJob, err := k8s.HasJobForIssue(ctx, cs, issue.Number); err == nil && hasJob {
+		if hasJob, err := k8s.HasAgentJobForIssue(ctx, issue.Number); err == nil && hasJob {
 			olog("scanner", "%s#%d owned by %s: no active pod but job exists, deferring to controller", issue.Repo.Name, issue.Number, issue.Owner)
 			continue
 		}
