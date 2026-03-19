@@ -16,7 +16,7 @@ func TestPVCPrefix(t *testing.T) {
 		{"pvc-claude-b.yaml", true},
 		{"pvc-foo", true},
 		{"namespace.yaml", false},
-		{"dispatcher-cronjob.yaml", false},
+		{"operator-deployment.yaml", false},
 		{"job-template.yaml", false},
 	}
 	for _, c := range cases {

@@ -26,12 +26,7 @@ import (
 )
 
 const (
-	DispatcherCronJobName              = "claude-dispatcher"
-	DispatcherDefaultSchedule          = "*/3 * * * *"
-	DispatcherHourlySchedule           = "0 * * * *"
-	DispatcherNormalScheduleAnnotation = "k3sc.abix.dev/normal-schedule"
-	DispatcherUsageResetAtAnnotation   = "k3sc.abix.dev/usage-reset-at"
-	UsageLimitMessage                  = "You're out of extra usage"
+	UsageLimitMessage = "You're out of extra usage"
 )
 
 var usageLimitResetPattern = regexp.MustCompile(`(?i)resets ([0-9]{1,2}(?::[0-9]{2})?\s*(?:am|pm)) \(([^)]+)\)`)
@@ -384,86 +379,6 @@ func FindRecentUsageLimitPod(ctx context.Context, cs *kubernetes.Clientset, look
 	return pod, logs[pod.Name], nil
 }
 
-func CheckAndRestoreDispatcherBackoff(ctx context.Context, cs *kubernetes.Clientset, name string, now time.Time) (bool, bool, string, *time.Time, error) {
-	cronjob, err := cs.BatchV1().CronJobs(types.Namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return false, false, "", nil, err
-	}
-	if cronjob.Annotations == nil {
-		return false, false, "", nil, nil
-	}
-
-	resetAtRaw := cronjob.Annotations[DispatcherUsageResetAtAnnotation]
-	if resetAtRaw == "" {
-		return false, false, "", nil, nil
-	}
-	resetAt, err := time.Parse(time.RFC3339, resetAtRaw)
-	if err != nil {
-		return false, false, "", nil, err
-	}
-	if now.Before(resetAt) {
-		return true, false, cronjob.Spec.Schedule, &resetAt, nil
-	}
-
-	normal := cronjob.Annotations[DispatcherNormalScheduleAnnotation]
-	if normal == "" {
-		normal = DispatcherDefaultSchedule
-	}
-	cronjob = cronjob.DeepCopy()
-	cronjob.Spec.Schedule = normal
-	delete(cronjob.Annotations, DispatcherNormalScheduleAnnotation)
-	delete(cronjob.Annotations, DispatcherUsageResetAtAnnotation)
-	if len(cronjob.Annotations) == 0 {
-		cronjob.Annotations = nil
-	}
-	if _, err := cs.BatchV1().CronJobs(types.Namespace).Update(ctx, cronjob, metav1.UpdateOptions{}); err != nil {
-		return false, false, "", nil, err
-	}
-	return false, true, normal, &resetAt, nil
-}
-
-func SetDispatcherBackoff(ctx context.Context, cs *kubernetes.Clientset, name string, resetAt time.Time) (bool, string, error) {
-	cronjob, err := cs.BatchV1().CronJobs(types.Namespace).Get(ctx, name, metav1.GetOptions{})
-	if err != nil {
-		return false, "", err
-	}
-	previous := cronjob.Spec.Schedule
-	cronjob = cronjob.DeepCopy()
-	if cronjob.Annotations == nil {
-		cronjob.Annotations = map[string]string{}
-	}
-
-	normal := cronjob.Annotations[DispatcherNormalScheduleAnnotation]
-	if normal == "" {
-		normal = previous
-		if normal == DispatcherHourlySchedule {
-			normal = DispatcherDefaultSchedule
-		}
-	}
-	desiredResetAt := resetAt.UTC().Format(time.RFC3339)
-	changed := false
-
-	if cronjob.Spec.Schedule != DispatcherHourlySchedule {
-		cronjob.Spec.Schedule = DispatcherHourlySchedule
-		changed = true
-	}
-	if cronjob.Annotations[DispatcherNormalScheduleAnnotation] != normal {
-		cronjob.Annotations[DispatcherNormalScheduleAnnotation] = normal
-		changed = true
-	}
-	if cronjob.Annotations[DispatcherUsageResetAtAnnotation] != desiredResetAt {
-		cronjob.Annotations[DispatcherUsageResetAtAnnotation] = desiredResetAt
-		changed = true
-	}
-	if !changed {
-		return false, previous, nil
-	}
-
-	if _, err := cs.BatchV1().CronJobs(types.Namespace).Update(ctx, cronjob, metav1.UpdateOptions{}); err != nil {
-		return false, previous, err
-	}
-	return true, previous, nil
-}
 
 func GetPodLogTail(ctx context.Context, cs *kubernetes.Clientset, podName string, lines int64) (string, error) {
 	req := cs.CoreV1().Pods(types.Namespace).GetLogs(podName, &corev1.PodLogOptions{

@@ -11,6 +11,7 @@ import (
 	"github.com/abix-/k3sc/internal/format"
 	"github.com/abix-/k3sc/internal/github"
 	"github.com/abix-/k3sc/internal/k8s"
+	"github.com/abix-/k3sc/internal/operator"
 	"github.com/abix-/k3sc/internal/tui"
 	"github.com/abix-/k3sc/internal/types"
 	tea "github.com/charmbracelet/bubbletea"
@@ -336,7 +337,12 @@ func runTop(cmd *cobra.Command, args []string) error {
 	}
 
 	dispatchFn := func() (string, error) {
-		return RunDispatch()
+		select {
+		case operator.ScanNow <- struct{}{}:
+			return "scan requested\n", nil
+		default:
+			return "scan already pending\n", nil
+		}
 	}
 
 	maxSlots := 5
