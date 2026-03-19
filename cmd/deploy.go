@@ -43,6 +43,33 @@ func runCmdEnv(desc string, env []string, name string, args ...string) error {
 	return c.Run()
 }
 
+func ensureSecret(kubectl string) error {
+	// check if secret already exists
+	checkCmd := fmt.Sprintf("%s get secret claude-secrets -n claude-agents -o name 2>/dev/null", kubectl)
+	c := exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", checkCmd)
+	if out, err := c.Output(); err == nil && strings.TrimSpace(string(out)) != "" {
+		fmt.Println("=== secret claude-secrets exists, skipping ===")
+		return nil
+	}
+
+	// read token from ~/.gh-token
+	home := os.Getenv("USERPROFILE")
+	if home == "" {
+		home = os.Getenv("HOME")
+	}
+	tokenBytes, err := os.ReadFile(filepath.Join(home, ".gh-token"))
+	if err != nil {
+		fmt.Println("=== WARNING: no ~/.gh-token and no existing secret -- create manually ===")
+		fmt.Println("  kubectl create secret generic claude-secrets -n claude-agents --from-literal=GITHUB_TOKEN=<token>")
+		return nil
+	}
+	token := strings.TrimSpace(string(tokenBytes))
+
+	createCmd := fmt.Sprintf("%s create secret generic claude-secrets -n claude-agents --from-literal=GITHUB_TOKEN=%s", kubectl, token)
+	return runCmd("creating secret from ~/.gh-token",
+		"wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", createCmd)
+}
+
 func findRepoRoot() (string, error) {
 	dir, err := os.Getwd()
 	if err != nil {
@@ -116,7 +143,6 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	manifests := []string{
 		"namespace.yaml",
 		"crd.yaml",
-		"secret.yaml",
 		"pvc-cargo-target.yaml",
 		"pvc-cargo-home.yaml",
 		"pvc-workspaces.yaml",
@@ -128,6 +154,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			"wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", applyCmd); err != nil {
 			return fmt.Errorf("apply %s: %w", file, err)
 		}
+	}
+
+	// secret: don't overwrite if it exists (template has placeholder values)
+	if err := ensureSecret(kubectl); err != nil {
+		return err
 	}
 
 	// configmap from job template (special: create --dry-run | apply)
