@@ -54,6 +54,7 @@ type Model struct {
 	showOperator bool
 	showLive     bool
 	showErrors   bool
+	logView      bool // full-screen live log view
 	width        int
 	height       int
 	quitting     bool
@@ -121,6 +122,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showErrors = !m.showErrors
 		case "l":
 			m.showLive = !m.showLive
+		case "tab", "L":
+			m.logView = !m.logView
 		case "r":
 			m.statusMsg = "refreshing..."
 			return m, func() tea.Msg { d, _ := m.gatherFn(); return d }
@@ -200,6 +203,9 @@ func (m Model) View() string {
 	if m.quitting || m.data == nil {
 		return ""
 	}
+	if m.logView {
+		return m.renderLogView()
+	}
 	h := m.height
 	if h < 20 {
 		h = 50
@@ -214,6 +220,77 @@ func (m Model) View() string {
 		}
 	}
 	return m.renderView(0)
+}
+
+func (m Model) renderLogView() string {
+	d := m.data
+	w := m.width
+	if w < 80 {
+		w = 120
+	}
+	h := m.height
+	if h < 20 {
+		h = 50
+	}
+
+	dim := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	titleFg := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+	green := lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	yellow := lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+
+	var sections []string
+
+	// header
+	running := 0
+	for _, p := range d.Pods {
+		if p.Phase == types.PhaseRunning || p.Phase == types.PhasePending {
+			running++
+		}
+	}
+	sections = append(sections, titleFg.Render(fmt.Sprintf(" Live Logs (%d running)", running)))
+
+	if len(d.LiveLogs) == 0 {
+		sections = append(sections, dim.Render("  (no running agents)"))
+	} else {
+		// divide available lines among running agents
+		// reserve 2 lines for header + help
+		available := h - 2
+		linesPerAgent := available / len(d.LiveLogs)
+		if linesPerAgent < 3 {
+			linesPerAgent = 3
+		}
+		// subtract 1 for the divider/header per agent
+		logLines := linesPerAgent - 1
+		if logLines < 2 {
+			logLines = 2
+		}
+
+		sep := dim.Render(strings.Repeat("-", w))
+		for i, ll := range d.LiveLogs {
+			if i > 0 {
+				sections = append(sections, sep)
+			}
+			agent := yellow.Render(fmt.Sprintf(" %s #%d", ll.Agent, ll.Issue))
+			sections = append(sections, agent)
+
+			// take last N lines
+			lines := ll.Lines
+			if len(lines) > logLines {
+				lines = lines[len(lines)-logLines:]
+			}
+			for _, line := range lines {
+				sections = append(sections, green.Render("  "+format.Truncate(line, w-4)))
+			}
+			// pad if fewer lines than allocated
+			for j := len(lines); j < logLines; j++ {
+				sections = append(sections, "")
+			}
+		}
+	}
+
+	sections = append(sections, dim.Render(" tab/L: dashboard  q: quit  r: refresh"))
+
+	return strings.Join(sections, "\n")
 }
 
 func (m Model) renderView(maxVisiblePods int) string {
@@ -445,7 +522,7 @@ func (m Model) renderView(maxVisiblePods int) string {
 	if m.statusMsg != "" {
 		sections = append(sections, yellow.Render(" "+m.statusMsg))
 	}
-	sections = append(sections, dim.Render(" q: quit  n: dispatch  p: pause  d: operator  e: errors  l: live  r: refresh  +/-: agents  1-6: copy /review"))
+	sections = append(sections, dim.Render(" q: quit  n: dispatch  p: pause  d: operator  e: errors  l: live  tab/L: logs  r: refresh  +/-: agents  1-6: copy /review"))
 
 	return strings.Join(sections, "\n")
 }
