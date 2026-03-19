@@ -252,19 +252,24 @@ func runTop(cmd *cobra.Command, args []string) error {
 	klog.LogToStderr(false)
 
 	// TUI mode
+	streamer := tui.NewLogStreamer(cs, types.Namespace)
+	defer streamer.Stop()
+
 	gatherFn := func() (*tui.Data, error) {
 		d, err := gather(cs)
 		if err != nil {
 			return nil, err
 		}
+		streamer.Sync(d.pods)
 		return &tui.Data{
-			NodeName:      d.nodeName,
-			NodeVersion:   d.nodeVersion,
-			Pods:          d.pods,
-			Tasks:         d.tasks,
-			Issues:        d.issues,
-			PRs:           d.prs,
+			NodeName:    d.nodeName,
+			NodeVersion: d.nodeVersion,
+			Pods:        d.pods,
+			Tasks:       d.tasks,
+			Issues:      d.issues,
+			PRs:         d.prs,
 			OperatorLog: d.operatorLog,
+			LiveLogs:    streamer.Snapshot(),
 		}, nil
 	}
 
@@ -294,10 +299,8 @@ func runTop(cmd *cobra.Command, args []string) error {
 		}()
 		wg2.Wait()
 
-		// fetch tails + live logs for running/pending pods only
+		// fetch log tails for dashboard display
 		var lwg sync.WaitGroup
-		var liveLogs []tui.LiveLog
-		var liveMu sync.Mutex
 		for i := range pods {
 			if pods[i].Phase != types.PhaseRunning && pods[i].Phase != types.PhasePending {
 				continue
@@ -307,31 +310,23 @@ func runTop(cmd *cobra.Command, args []string) error {
 				defer lwg.Done()
 				tail, _ := k8s.GetPodLogTail(ctx, cs, pods[idx].Name, 20)
 				pods[idx].LogTail = tail
-				if pods[idx].Phase == types.PhaseRunning {
-					lines, _ := k8s.GetPodLogLines(ctx, cs, pods[idx].Name, 8)
-					liveMu.Lock()
-					liveLogs = append(liveLogs, tui.LiveLog{
-						Issue: pods[idx].Issue,
-						Agent: types.AgentName(pods[idx].Family, pods[idx].Slot),
-						Lines: lines,
-					})
-					liveMu.Unlock()
-				}
 			}(i)
 		}
 		lwg.Wait()
 
+		// sync streaming logs
+		streamer.Sync(pods)
 		tasks, _ := k8s.GetAgentJobs(ctx)
 
 		return &tui.Data{
-			NodeName:      current.NodeName,
-			NodeVersion:   current.NodeVersion,
-			Pods:          pods,
-			Tasks:         tasks,
-			Issues:        current.Issues,
-			PRs:           current.PRs,
+			NodeName:    current.NodeName,
+			NodeVersion: current.NodeVersion,
+			Pods:        pods,
+			Tasks:       tasks,
+			Issues:      current.Issues,
+			PRs:         current.PRs,
 			OperatorLog: dispLog,
-			LiveLogs:      liveLogs,
+			LiveLogs:    streamer.Snapshot(),
 		}, nil
 	}
 
