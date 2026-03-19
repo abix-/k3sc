@@ -214,14 +214,12 @@ func SetIssueLabels(ctx context.Context, repo types.Repo, issueNumber int, addLa
 
 // ClaimIssue sets the owner label on an issue (removes all other workflow/owner labels).
 func ClaimIssue(ctx context.Context, repo types.Repo, issueNumber int, agentName string) error {
-	return SetIssueLabels(ctx, repo, issueNumber, []string{agentName},
-		fmt.Sprintf("## k3sc operator\n- Claimed by %s", agentName))
+	return SetIssueLabels(ctx, repo, issueNumber, []string{agentName}, "")
 }
 
 // UnclaimIssue removes owner label and sets a workflow state label.
 func UnclaimIssue(ctx context.Context, repo types.Repo, issueNumber int, ownerLabel, returnLabel string) error {
-	return SetIssueLabels(ctx, repo, issueNumber, []string{returnLabel},
-		fmt.Sprintf("## k3sc operator\n- Released by %s -> %s", ownerLabel, returnLabel))
+	return SetIssueLabels(ctx, repo, issueNumber, []string{returnLabel}, "")
 }
 
 // isK3sAgent returns true if the owner label is a k3s letter-based agent (claude-a through claude-z, codex-a through codex-z).
