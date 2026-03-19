@@ -183,12 +183,16 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *AgentJob) (ctrl.
 		if returnTo == "" {
 			returnTo = "ready"
 		}
+		// failed reviews escalate to human -- don't loop back to needs-review
+		if returnTo == "needs-review" {
+			returnTo = "needs-human"
+		}
 		task.Status.NextAction = returnTo
 		github.UnclaimIssue(ctx, repo, task.Spec.IssueNumber, task.Status.Agent, returnTo)
 	}
 
 	task.Status.Reported = true
-	r.logf(ctx, task, "%s -> %s%s", status, task.Status.NextAction, duration)
+	r.logf(ctx, task, "%s (origin=%s) -> %s%s", status, task.Spec.OriginState, task.Status.NextAction, duration)
 	return ctrl.Result{}, r.Status().Update(ctx, task)
 }
 

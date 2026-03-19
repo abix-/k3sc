@@ -206,6 +206,18 @@ func GetAgentPods(ctx context.Context, cs *kubernetes.Clientset) ([]types.AgentP
 	return result, nil
 }
 
+// HasJobForIssue returns true if any k8s Job exists for the given issue number,
+// regardless of whether it's active, succeeded, or failed.
+func HasJobForIssue(ctx context.Context, cs *kubernetes.Clientset, issue int) (bool, error) {
+	jobs, err := cs.BatchV1().Jobs(types.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("app=claude-agent,issue-number=%d", issue),
+	})
+	if err != nil {
+		return false, err
+	}
+	return len(jobs.Items) > 0, nil
+}
+
 func GetActiveSlots(ctx context.Context, cs *kubernetes.Clientset) ([]int, error) {
 	jobs, err := cs.BatchV1().Jobs(types.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app=claude-agent",
