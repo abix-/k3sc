@@ -17,9 +17,12 @@ import (
 	"github.com/abix-/k3sc/internal/types"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -76,6 +79,18 @@ type agentJobList struct {
 	} `json:"items"`
 }
 
+var dispatchStateGVR = schema.GroupVersionResource{
+	Group:    "k3sc.abix.dev",
+	Version:  "v1",
+	Resource: "dispatchstates",
+}
+
+var agentJobGVR = schema.GroupVersionResource{
+	Group:    "k3sc.abix.dev",
+	Version:  "v1",
+	Resource: "agentjobs",
+}
+
 // GetAgentJobs fetches AgentJob CRs and returns TUI-friendly TaskInfo structs.
 func GetAgentJobs(ctx context.Context) ([]types.TaskInfo, error) {
 	config, err := getConfig()
@@ -106,12 +121,12 @@ func GetAgentJobs(ctx context.Context) ([]types.TaskInfo, error) {
 	var result []types.TaskInfo
 	for _, item := range list.Items {
 		t := types.TaskInfo{
-			Name:     item.Metadata.Name,
-			Repo:     types.RepoByName(item.Spec.RepoName),
-			Issue:    item.Spec.IssueNumber,
-			Phase:    item.Status.Phase,
-			Agent:    item.Status.Agent,
-			Slot:     item.Status.Slot,
+			Name:       item.Metadata.Name,
+			Repo:       types.RepoByName(item.Spec.RepoName),
+			Issue:      item.Spec.IssueNumber,
+			Phase:      item.Status.Phase,
+			Agent:      item.Status.Agent,
+			Slot:       item.Status.Slot,
 			NextAction: item.Status.NextAction,
 		}
 		if item.Status.StartedAt != "" {
@@ -223,40 +238,87 @@ func HasAgentJobForIssue(ctx context.Context, issue int) (bool, error) {
 	return false, nil
 }
 
-// DeleteAgentJobsForIssue deletes all terminal AgentJob CRDs for the given issue.
+// DeleteAgentJobsForIssue deletes all terminal AgentJob CRDs for the given repo/issue pair.
 // Returns the number of deleted jobs.
-func DeleteAgentJobsForIssue(ctx context.Context, issue int) (int, error) {
+func DeleteAgentJobsForIssue(ctx context.Context, repoName string, issue int) (int, error) {
 	cfg, err := getConfig()
 	if err != nil {
 		return 0, err
 	}
-	cfg.APIPath = "/apis"
-	cfg.GroupVersion = &schema.GroupVersion{Group: "k3sc.abix.dev", Version: "v1"}
-	cfg.NegotiatedSerializer = nil
-
-	rc, err := rest.UnversionedRESTClientFor(cfg)
+	dc, err := dynamic.NewForConfig(cfg)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("dynamic client: %w", err)
 	}
 
-	jobs, err := GetAgentJobs(ctx)
+	list, err := dc.Resource(agentJobGVR).Namespace(types.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("list agentjobs: %w", err)
 	}
-
 	deleted := 0
 	terminal := map[string]bool{"Succeeded": true, "Failed": true, "Blocked": true}
-	for _, j := range jobs {
-		if j.Issue == issue && terminal[j.Phase] {
-			err := rc.Delete().
-				AbsPath("/apis/k3sc.abix.dev/v1/namespaces/" + types.Namespace + "/agentjobs/" + j.Name).
-				Do(ctx).Error()
-			if err == nil {
-				deleted++
-			}
+	for _, item := range list.Items {
+		specRepoName, _, _ := unstructured.NestedString(item.Object, "spec", "repoName")
+		specIssue, _, _ := unstructured.NestedInt64(item.Object, "spec", "issueNumber")
+		phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
+		if specRepoName != repoName || int(specIssue) != issue || !terminal[phase] {
+			continue
+		}
+		if err := dc.Resource(agentJobGVR).Namespace(types.Namespace).Delete(ctx, item.GetName(), metav1.DeleteOptions{}); err == nil {
+			deleted++
 		}
 	}
 	return deleted, nil
+}
+
+func TriggerDispatch(ctx context.Context) (string, error) {
+	cfg, err := getConfig()
+	if err != nil {
+		return "", err
+	}
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return "", fmt.Errorf("dynamic client: %w", err)
+	}
+
+	resource := dc.Resource(dispatchStateGVR).Namespace(types.Namespace)
+	state, err := resource.Get(ctx, types.DispatchStateName, metav1.GetOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return "", fmt.Errorf("get dispatch state: %w", err)
+		}
+		state = &unstructured.Unstructured{
+			Object: map[string]any{
+				"apiVersion": "k3sc.abix.dev/v1",
+				"kind":       "DispatchState",
+				"metadata": map[string]any{
+					"name":      types.DispatchStateName,
+					"namespace": types.Namespace,
+				},
+				"spec": map[string]any{
+					"triggerNonce": int64(1),
+				},
+			},
+		}
+		if _, err := resource.Create(ctx, state, metav1.CreateOptions{}); err != nil {
+			return "", fmt.Errorf("create dispatch state: %w", err)
+		}
+		return "dispatch state created and scan requested\n", nil
+	}
+
+	nonce, found, err := unstructured.NestedInt64(state.Object, "spec", "triggerNonce")
+	if err != nil {
+		return "", fmt.Errorf("read trigger nonce: %w", err)
+	}
+	if !found {
+		nonce = 0
+	}
+	if err := unstructured.SetNestedField(state.Object, nonce+1, "spec", "triggerNonce"); err != nil {
+		return "", fmt.Errorf("set trigger nonce: %w", err)
+	}
+	if _, err := resource.Update(ctx, state, metav1.UpdateOptions{}); err != nil {
+		return "", fmt.Errorf("update dispatch state: %w", err)
+	}
+	return fmt.Sprintf("scan requested (trigger %d)\n", nonce+1), nil
 }
 
 func GetActiveSlots(ctx context.Context, cs *kubernetes.Clientset) ([]int, error) {
@@ -378,7 +440,6 @@ func FindRecentUsageLimitPod(ctx context.Context, cs *kubernetes.Clientset, look
 	}
 	return pod, logs[pod.Name], nil
 }
-
 
 func GetPodLogTail(ctx context.Context, cs *kubernetes.Clientset, podName string, lines int64) (string, error) {
 	req := cs.CoreV1().Pods(types.Namespace).GetLogs(podName, &corev1.PodLogOptions{

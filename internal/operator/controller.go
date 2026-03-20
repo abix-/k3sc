@@ -14,6 +14,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -71,25 +72,73 @@ func (r *Reconciler) errf(ctx context.Context, err error, task *AgentJob, format
 	}
 }
 
-func (r *Reconciler) handlePending(ctx context.Context, task *AgentJob) (ctrl.Result, error) {
-	task.Status.Phase = TaskPhaseAssigned
-	task.Status.Agent = task.Spec.Agent
-	task.Status.Slot = task.Spec.Slot
+func taskAgent(task *AgentJob) string {
+	if task.Status.Agent != "" {
+		return task.Status.Agent
+	}
+	return task.Spec.Agent
+}
 
-	r.logf(ctx, task, "assigned %s slot %d", task.Spec.Agent, task.Spec.Slot)
+func taskSlot(task *AgentJob) int {
+	if task.Status.Slot > 0 {
+		return task.Status.Slot
+	}
+	return task.Spec.Slot
+}
+
+func taskFamily(task *AgentJob) string {
+	if task.Status.Family != "" {
+		return task.Status.Family
+	}
+	if task.Spec.Family != "" {
+		return task.Spec.Family
+	}
+	if agent := taskAgent(task); len(agent) >= len("codex-") && agent[:len("codex-")] == "codex-" {
+		return string(types.FamilyCodex)
+	}
+	return string(types.FamilyClaude)
+}
+
+func (r *Reconciler) handlePending(ctx context.Context, task *AgentJob) (ctrl.Result, error) {
+	slot := taskSlot(task)
+	agent := taskAgent(task)
+	family := taskFamily(task)
+
+	if slot == 0 || agent == "" {
+		var err error
+		slot, err = dispatch.FindFreeSlot(ctx, r.K8s, dispatch.MaxSlots())
+		if err != nil {
+			return ctrl.Result{RequeueAfter: RequeueDelay}, err
+		}
+		if slot == -1 {
+			return ctrl.Result{RequeueAfter: RequeueDelay}, nil
+		}
+		f := pickFamily()
+		family = string(f)
+		agent = types.AgentName(f, slot)
+	}
+
+	task.Status.Phase = TaskPhaseAssigned
+	task.Status.Agent = agent
+	task.Status.Slot = slot
+	task.Status.Family = family
+
+	r.logf(ctx, task, "assigned %s slot %d", agent, slot)
 	return ctrl.Result{Requeue: true}, r.Status().Update(ctx, task)
 }
 
 func (r *Reconciler) handleAssigned(ctx context.Context, task *AgentJob) (ctrl.Result, error) {
 	repo := dispatch.RepoFromString(task.Spec.Repo)
+	task.Status.Agent = taskAgent(task)
+	task.Status.Slot = taskSlot(task)
+	task.Status.Family = taskFamily(task)
 
 	if err := github.ClaimIssue(ctx, repo, task.Spec.IssueNumber, task.Status.Agent); err != nil {
 		r.errf(ctx, err, task, "claim failed")
 		return ctrl.Result{RequeueAfter: RequeueDelay}, nil
 	}
 
-	family := task.Spec.Family
-	jobName, err := k8s.CreateJobFromTemplate(ctx, r.K8s, r.Template, task.Spec.IssueNumber, task.Status.Slot, task.Spec.RepoURL, family)
+	jobName, err := k8s.CreateJobFromTemplate(ctx, r.K8s, r.Template, task.Spec.IssueNumber, task.Status.Slot, task.Spec.RepoURL, taskFamily(task))
 	if err != nil {
 		r.errf(ctx, err, task, "create job failed")
 		return ctrl.Result{RequeueAfter: RequeueDelay}, err
@@ -117,6 +166,7 @@ func (r *Reconciler) handleRunning(ctx context.Context, task *AgentJob) (ctrl.Re
 		task.Status.Phase = TaskPhaseFailed
 		task.Status.FinishedAt = &now
 		task.Status.LastError = "job disappeared"
+		task.Status.FailureCount++
 		r.logf(ctx, task, "job disappeared")
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
@@ -140,6 +190,7 @@ func (r *Reconciler) handleRunning(ctx context.Context, task *AgentJob) (ctrl.Re
 		task.Status.Phase = TaskPhaseFailed
 		task.Status.FinishedAt = &now
 		task.Status.LastError = "pod failed"
+		task.Status.FailureCount++
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
@@ -183,12 +234,6 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *AgentJob) (ctrl.
 	task.Status.Reported = true
 	r.logf(ctx, task, "%s (origin=%s) -> %s%s", status, task.Spec.OriginState, task.Status.NextAction, duration)
 
-	// trigger immediate scan so the next agent picks up the transitioned issue fast
-	select {
-	case ScanNow <- struct{}{}:
-	default:
-	}
-
 	return ctrl.Result{}, r.Status().Update(ctx, task)
 }
 
@@ -203,6 +248,8 @@ func isJobDead(job *batchv1.Job) bool {
 
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
+		Named("agentjob").
 		For(&AgentJob{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
 		Complete(r)
 }

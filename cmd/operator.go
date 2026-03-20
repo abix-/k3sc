@@ -15,6 +15,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
@@ -75,6 +77,11 @@ func runOperator(cmd *cobra.Command, args []string) error {
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
+		Cache: cache.Options{
+			DefaultNamespaces: map[string]cache.Config{
+				types.Namespace: {},
+			},
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("create manager: %w", err)
@@ -99,8 +106,24 @@ func runOperator(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("setup controller: %w", err)
 	}
 
+	dispatcher := &operator.DispatchReconciler{
+		Client:    mgr.GetClient(),
+		APIReader: mgr.GetAPIReader(),
+		K8s:       cs,
+		Namespace: types.Namespace,
+	}
+	if err := dispatcher.SetupWithManager(mgr); err != nil {
+		return fmt.Errorf("setup scheduler: %w", err)
+	}
+
 	ctx := ctrl.SetupSignalHandler()
-	go operator.Scanner(ctx, mgr.GetClient(), cs, types.Namespace)
+	bootstrap, err := crclient.New(ctrl.GetConfigOrDie(), crclient.Options{Scheme: scheme})
+	if err != nil {
+		return fmt.Errorf("bootstrap client: %w", err)
+	}
+	if err := operator.EnsureDispatchState(ctx, bootstrap, types.Namespace); err != nil {
+		return fmt.Errorf("ensure dispatch state: %w", err)
+	}
 
 	fmt.Println("[operator] starting")
 	return mgr.Start(ctx)

@@ -53,7 +53,7 @@ func resetIssueLabels(ctx context.Context, repoName string, issue int, targetLab
 	}
 
 	// delete failed/blocked AgentJobs so the issue isn't stuck at MaxFailures
-	deleted, err := k8s.DeleteAgentJobsForIssue(ctx, issue)
+	deleted, err := k8s.DeleteAgentJobsForIssue(ctx, repoName, issue)
 	if err != nil {
 		fmt.Printf("warning: could not clean up AgentJobs: %v\n", err)
 	} else if deleted > 0 {

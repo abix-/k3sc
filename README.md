@@ -9,9 +9,9 @@ Built for [Endless](https://github.com/abix-/endless), a real-time colony sim in
 ```
 GitHub Issues (ready/needs-review labels)
         |
-   [operator + scanner goroutine]
+   [operator]
         |
-   creates AgentJob CRs -> reconciler creates k8s Jobs
+   DispatchState reconciler creates/queues AgentJobs -> AgentJob reconciler creates k8s Jobs
         |
    [agent pod]
         |
@@ -21,7 +21,7 @@ GitHub Issues (ready/needs-review labels)
         +-- pushes branch, creates PR, hands off via labels
 ```
 
-The scanner polls all configured repos for open issues with workflow labels (`ready`, `needs-review`). It assigns each to a free slot and creates a AgentJob CR, which the reconciler picks up to claim the issue on GitHub and create a k8s Job. When idle, the scanner backs off exponentially (2min -> 1hr cap) to minimize GitHub API usage.
+The operator runs two reconcilers in one process. A singleton `DispatchState` reconciler polls configured repos for workflow issues (`ready`, `needs-review`), backs off exponentially when idle (2min -> 1hr cap), cleans up orphans, and prepares `AgentJob` work items. The `AgentJob` reconciler claims the issue on GitHub, creates the k8s Job, watches it complete, and transitions labels for the next step.
 
 Each agent pod gets a letter-based identity (claude-a, claude-b, ..., claude-z) and its own workspace on a shared PVC.
 
@@ -51,7 +51,7 @@ The `top` command provides a live dashboard with sections for cluster status, op
 
 ## Architecture
 
-- **Operator**: Deployment running a controller-runtime reconciler + scanner goroutine
+- **Operator**: One controller-runtime manager running both the singleton dispatch reconciler and the per-issue `AgentJob` reconciler
 - **Agent pods**: Ubuntu 24.04 with Node.js, Claude Code CLI, Rust toolchain, gh CLI, kubectl
 - **Shared PVCs**: `workspaces` (git clones), `cargo-target` (build artifacts), `cargo-home` (crate registry)
 - **Host mounts**: Claude skills, commands, docs, and CLAUDE.md mounted read-only from the host
@@ -91,7 +91,7 @@ Issues are routed through a state machine via GitHub labels:
 | `needs-review` | Implementation done, needs another agent to review |
 | `needs-human` | Requires human action (merge, design decision) |
 
-The scanner only picks up `ready` and `needs-review` issues from configured repos, and only when the issue author is in `allowed_authors` (prioritizing `needs-review`).
+The dispatch reconciler only picks up `ready` and `needs-review` issues from configured repos, and only when the issue author is in `allowed_authors` (prioritizing `needs-review`).
 
 ## Prerequisites
 
@@ -135,7 +135,7 @@ internal/
   dispatch/       slot allocation, template loading
   github/         GitHub API client (issues, PRs, labels)
   k8s/            Kubernetes client (pods, jobs, logs, CRs)
-  operator/       controller-runtime reconciler + scanner
+  operator/       controller-runtime reconcilers for dispatch + AgentJobs
   tui/            Bubbletea TUI model
   types/          shared types (Repo, Issue, AgentPod, etc.)
   format/         output formatting helpers

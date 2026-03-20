@@ -213,10 +213,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	kubectl := "sudo k3s kubectl"
 	mntManifests := mntRoot + "/manifests"
 
-	// order matters: namespace -> CRD -> secret -> PVCs -> configmap -> operator
+	// order matters: namespace -> CRD -> RBAC -> secret -> PVCs -> configmap -> operator
 	manifests := []string{
 		"namespace.yaml",
 		"crd.yaml",
+		"rbac.yaml",
 		"pvc-cargo-target.yaml",
 		"pvc-cargo-home.yaml",
 		"pvc-workspaces.yaml",

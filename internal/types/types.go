@@ -6,6 +6,9 @@ import "time"
 // Defaults here match the config defaults as a safety net.
 var Namespace = "claude-agents"
 
+// DispatchStateName is the singleton scheduler object reconciled by the operator.
+const DispatchStateName = "default"
+
 type Repo struct {
 	Owner string
 	Name  string
