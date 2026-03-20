@@ -42,36 +42,6 @@ func TestParseIssueLabels(t *testing.T) {
 	}
 }
 
-func TestGetOwnedIssuesFiltersNeedsHuman(t *testing.T) {
-	parked := []*gh.Label{label("needs-human"), label("claude-a")}
-	state, owner := parseIssueLabels(parked)
-	if owner == "" {
-		t.Fatal("needs-human issue has no owner parsed")
-	}
-	if owner != "" && state != "needs-human" {
-		t.Errorf("needs-human issue would be picked up as orphan")
-	}
-}
-
-func TestIsK3sAgent(t *testing.T) {
-	tests := []struct {
-		owner string
-		want  bool
-	}{
-		{"claude-a", true},
-		{"claude-z", true},
-		{"claude-1", false},
-		{"claude-10", false},
-		{"codex-1", false},
-		{"", false},
-	}
-	for _, tc := range tests {
-		if got := isK3sAgent(tc.owner); got != tc.want {
-			t.Errorf("isK3sAgent(%q) = %v, want %v", tc.owner, got, tc.want)
-		}
-	}
-}
-
 func TestDispatchTrustReason(t *testing.T) {
 	prev := config.C
 	config.C = config.Config{

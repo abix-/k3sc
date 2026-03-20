@@ -194,23 +194,66 @@ func (r *DispatchReconciler) scan(ctx context.Context) (bool, error) {
 	}
 	if usagePod != nil {
 		olog("scheduler", "usage limit detected in pod %s (%s#%d), skipping dispatch", usagePod.Name, usagePod.Repo.Name, usagePod.Issue)
-	}
-
-	eligible, err := github.GetEligibleIssues(ctx)
-	if err != nil {
-		return false, err
+		return false, nil
 	}
 
 	maxSlots := dispatch.MaxSlots()
 	usedSlots := usedSlotsFromGroups(groups)
-	hadEligible := false
+	hadWork := false
 
-	for _, issue := range eligible {
+	// phase 1: re-dispatch from CRD state (needs-review and ready retries)
+	for key, group := range groups {
+		if group == nil || group.Current == nil || group.Active != nil {
+			continue
+		}
+		if !IsTerminal(group.Current.Status.Phase) || !group.Current.Status.Reported {
+			continue
+		}
+		if group.FailureCount >= MaxFailures {
+			olog("scheduler", "%s blocked after %d failures", key, group.FailureCount)
+			continue
+		}
+		nextAction := group.Current.Status.NextAction
+		if nextAction != "needs-review" && nextAction != "ready" {
+			continue
+		}
+
+		slot := dispatch.FindFreeSlotFromList(usedSlots, maxSlots)
+		if slot == -1 {
+			olog("scheduler", "no free slots")
+			break
+		}
+
+		family := pickFamily()
+		agent := coretypes.AgentName(family, slot)
+		// build a synthetic issue for requeueTask
+		repo := dispatch.RepoFromString(group.Current.Spec.Repo)
+		issue := coretypes.Issue{
+			Number: group.Current.Spec.IssueNumber,
+			Repo:   repo,
+			State:  nextAction,
+		}
+		if err := r.requeueTask(ctx, group.Current, issue, slot, agent, string(family), group.FailureCount); err != nil {
+			olog("scheduler", "redispatch %s: %v", group.Current.Name, err)
+			continue
+		}
+		olog("scheduler", "redispatch %s -> %s (slot %d, %s)", group.Current.Name, nextAction, slot, agent)
+		usedSlots = append(usedSlots, slot)
+		group.Active = &AgentJob{Spec: AgentJobSpec{Slot: slot, Agent: agent}}
+		hadWork = true
+	}
+
+	// phase 2: intake new issues with "ready" label from GitHub
+	ready, err := github.GetReadyIssues(ctx)
+	if err != nil {
+		return hadWork, err
+	}
+
+	for _, issue := range ready {
 		if reason := github.DispatchTrustReason(issue); reason != "" {
 			olog("scheduler", "skip %s#%d: %s", issue.Repo.Name, issue.Number, reason)
 			continue
 		}
-		hadEligible = true
 
 		key := issueKey(fullRepo(issue.Repo), issue.Number)
 		group := groups[key]
@@ -221,7 +264,8 @@ func (r *DispatchReconciler) scan(ctx context.Context) (bool, error) {
 			olog("scheduler", "%s blocked after %d failures", key, group.FailureCount)
 			continue
 		}
-		if usagePod != nil {
+		// skip if already has a reported terminal task (already processed)
+		if group != nil && group.Current != nil && IsTerminal(group.Current.Status.Phase) && group.Current.Status.Reported {
 			continue
 		}
 
@@ -234,9 +278,6 @@ func (r *DispatchReconciler) scan(ctx context.Context) (bool, error) {
 		family := pickFamily()
 		agent := coretypes.AgentName(family, slot)
 		if group != nil && group.Current != nil {
-			if IsTerminal(group.Current.Status.Phase) && group.Current.Status.Reported {
-				continue
-			}
 			if err := r.requeueTask(ctx, group.Current, issue, slot, agent, string(family), group.FailureCount); err != nil {
 				olog("scheduler", "requeue %s: %v", group.Current.Name, err)
 				continue
@@ -256,17 +297,11 @@ func (r *DispatchReconciler) scan(ctx context.Context) (bool, error) {
 			group = &issueTaskState{}
 			groups[key] = group
 		}
-		group.Active = &AgentJob{
-			Spec: AgentJobSpec{
-				Slot:  slot,
-				Agent: agent,
-			},
-		}
+		group.Active = &AgentJob{Spec: AgentJobSpec{Slot: slot, Agent: agent}}
+		hadWork = true
 	}
 
-	r.orphanCleanup(ctx, groups)
-
-	return usagePod == nil && hadEligible, nil
+	return hadWork, nil
 }
 
 func (r *DispatchReconciler) loadTaskState(ctx context.Context) ([]AgentJob, map[string]*issueTaskState, error) {
@@ -477,56 +512,6 @@ func (r *DispatchReconciler) cleanupTerminalTasks(ctx context.Context, tasks []A
 			olog("scheduler", "cleanup %s: %v", task.Name, err)
 		} else {
 			olog("scheduler", "cleaned up %s", task.Name)
-		}
-	}
-}
-
-// orphanCleanup finds issues with owner labels but no active pod or non-terminal AgentJob.
-func (r *DispatchReconciler) orphanCleanup(ctx context.Context, groups map[string]*issueTaskState) {
-	owned, err := github.GetOwnedIssues(ctx)
-	if err != nil {
-		olog("scheduler", "orphan check error: %v", err)
-		return
-	}
-	if len(owned) == 0 {
-		return
-	}
-
-	activeSlots, err := k8s.GetActiveSlots(ctx, r.K8s)
-	if err != nil {
-		olog("scheduler", "orphan slot check error: %v", err)
-		return
-	}
-	activeAgents := map[string]bool{}
-	for _, slot := range activeSlots {
-		activeAgents[coretypes.AgentName(coretypes.FamilyClaude, slot)] = true
-		activeAgents[coretypes.AgentName(coretypes.FamilyCodex, slot)] = true
-	}
-
-	for _, issue := range owned {
-		if activeAgents[issue.Owner] {
-			continue
-		}
-		key := issueKey(fullRepo(issue.Repo), issue.Number)
-		if group := groups[key]; group != nil {
-			if group.Active != nil {
-				olog("scheduler", "%s#%d owned by %s: task active, deferring to controller", issue.Repo.Name, issue.Number, issue.Owner)
-				continue
-			}
-			if group.Current != nil && IsTerminal(group.Current.Status.Phase) && group.Current.Status.Reported {
-				olog("scheduler", "%s#%d owned by %s: task reported, skipping orphan cleanup", issue.Repo.Name, issue.Number, issue.Owner)
-				continue
-			}
-		}
-
-		returnLabel := "ready"
-		hasPR, err := github.HasOpenPR(ctx, issue.Repo, issue.Number)
-		if err == nil && hasPR {
-			returnLabel = "needs-review"
-		}
-		olog("scheduler", "orphan: %s#%d owned by %s, returning to %s", issue.Repo.Name, issue.Number, issue.Owner, returnLabel)
-		if err := github.UnclaimIssue(ctx, issue.Repo, issue.Number, issue.Owner, returnLabel); err != nil {
-			olog("scheduler", "orphan unclaim %s#%d: %v", issue.Repo.Name, issue.Number, err)
 		}
 	}
 }

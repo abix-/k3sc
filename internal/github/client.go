@@ -217,35 +217,6 @@ func UnclaimIssue(ctx context.Context, repo types.Repo, issueNumber int, ownerLa
 	return SetIssueLabels(ctx, repo, issueNumber, []string{returnLabel}, "")
 }
 
-// isK3sAgent returns true if the owner label is a k3s letter-based agent (claude-a through claude-z, codex-a through codex-z).
-// Windows agents use numbers (claude-1, codex-1) and should not be touched by the dispatcher.
-func isK3sAgent(owner string) bool {
-	for _, prefix := range []string{"claude-", "codex-"} {
-		if strings.HasPrefix(owner, prefix) {
-			suffix := strings.TrimPrefix(owner, prefix)
-			if len(suffix) == 1 && suffix[0] >= 'a' && suffix[0] <= 'z' {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// GetOwnedIssues returns open issues owned by k3s agents (letter-based) that are not needs-human.
-func GetOwnedIssues(ctx context.Context) ([]types.Issue, error) {
-	all, err := GetAllOpenIssues(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var result []types.Issue
-	for _, i := range all {
-		if i.Owner != "" && i.State != "needs-human" && isK3sAgent(i.Owner) {
-			result = append(result, i)
-		}
-	}
-	return result, nil
-}
-
 // HasOpenPR checks if there's an open PR for a given issue-N branch.
 func HasOpenPR(ctx context.Context, repo types.Repo, issueNumber int) (bool, error) {
 	client := newClient(ctx)
@@ -304,21 +275,20 @@ func isAllowedAuthor(author string) bool {
 	return false
 }
 
-func GetEligibleIssues(ctx context.Context) ([]types.Issue, error) {
+// GetReadyIssues returns issues with the "ready" label from configured repos.
+// This is the only GitHub label the operator reads for dispatch decisions.
+// After intake, all state is tracked in AgentJob CRDs.
+func GetReadyIssues(ctx context.Context) ([]types.Issue, error) {
 	all, err := GetAllOpenIssues(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// needs-review first (sorted ascending), then ready
-	var review, ready []types.Issue
+	var ready []types.Issue
 	for _, i := range all {
-		switch i.State {
-		case "needs-review":
-			review = append(review, i)
-		case "ready":
+		if i.State == "ready" {
 			ready = append(ready, i)
 		}
 	}
-	return append(review, ready...), nil
+	return ready, nil
 }
