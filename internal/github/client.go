@@ -94,6 +94,9 @@ func GetOpenPRs(ctx context.Context) ([]types.PullRequest, error) {
 					break
 				}
 			}
+			if waiting {
+				owner = "" // waiting overrides ownership
+			}
 			result = append(result, types.PullRequest{
 				Number:  pr.GetNumber(),
 				Title:   pr.GetTitle(),
