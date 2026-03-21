@@ -412,6 +412,70 @@ func (r *DispatchReconciler) scan(ctx context.Context, disabledFamilies []string
 		result.hadWork = true
 	}
 
+	// phase 3: intake needs-review issues for agent-assisted review
+	needsReview, err := github.GetNeedsReviewIssues(ctx)
+	if err != nil {
+		return result, err
+	}
+
+	for _, issue := range needsReview {
+		if reason := github.DispatchTrustReason(issue); reason != "" {
+			continue
+		}
+
+		key := issueKey(fullRepo(issue.Repo), issue.Number)
+		group := groups[key]
+		if group != nil && group.Active != nil {
+			continue
+		}
+		if group != nil && group.FailureCount >= MaxFailures {
+			continue
+		}
+		if group != nil && group.Current != nil && IsTerminal(group.Current.Status.Phase) && group.Current.Status.Reported {
+			continue
+		}
+
+		slot := dispatch.FindFreeSlotFromList(usedSlots, maxSlots)
+		if slot == -1 {
+			break
+		}
+
+		family, ok := pickAvailableFamily(claudeAvailable, codexAvailable)
+		if !ok {
+			break
+		}
+		agent := coretypes.AgentName(family, slot)
+
+		// avoid assigning the same agent that implemented the issue
+		if group != nil && group.Current != nil && group.Current.Status.Agent == agent {
+			olog("scheduler", "skip review %s#%d: same agent %s implemented it", issue.Repo.Name, issue.Number, agent)
+			continue
+		}
+
+		if group != nil && group.Current != nil {
+			if err := r.requeueTask(ctx, group.Current, issue, slot, agent, string(family), group.FailureCount); err != nil {
+				olog("scheduler", "requeue review %s: %v", group.Current.Name, err)
+				continue
+			}
+			olog("scheduler", "requeued review %s (slot %d, %s)", group.Current.Name, slot, agent)
+		} else {
+			name, err := r.createTask(ctx, issue, slot, agent, string(family))
+			if err != nil {
+				olog("scheduler", "create review %s#%d: %v", issue.Repo.Name, issue.Number, err)
+				continue
+			}
+			olog("scheduler", "created review %s (slot %d, %s)", name, slot, agent)
+		}
+
+		usedSlots = append(usedSlots, slot)
+		if group == nil {
+			group = &issueTaskState{}
+			groups[key] = group
+		}
+		group.Active = &AgentJob{Spec: AgentJobSpec{Slot: slot, Agent: agent}}
+		result.hadWork = true
+	}
+
 	return result, nil
 }
 
@@ -549,6 +613,14 @@ func sanitizeName(s string) string {
 }
 
 func (r *DispatchReconciler) createTask(ctx context.Context, issue coretypes.Issue, slot int, agent, family string) (string, error) {
+	// look up PR number for review jobs
+	var prNumber int
+	if issue.State == "needs-review" {
+		if pr, err := github.GetOpenPRNumber(ctx, issue.Repo, issue.Number); err == nil {
+			prNumber = pr
+		}
+	}
+
 	task := &AgentJob{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: GroupVersion.String(),
@@ -562,6 +634,7 @@ func (r *DispatchReconciler) createTask(ctx context.Context, issue coretypes.Iss
 			Repo:        fullRepo(issue.Repo),
 			RepoName:    issue.Repo.Name,
 			IssueNumber: issue.Number,
+			PRNumber:    prNumber,
 			RepoURL:     issue.Repo.CloneURL(),
 			Slot:        slot,
 			Agent:       agent,
@@ -593,6 +666,12 @@ func (r *DispatchReconciler) requeueTask(ctx context.Context, task *AgentJob, is
 		latest.Spec.Agent = agent
 		latest.Spec.Family = family
 		latest.Spec.OriginState = issue.State
+		// look up PR number for review jobs
+		if issue.State == "needs-review" {
+			if pr, err := github.GetOpenPRNumber(ctx, issue.Repo, issue.Number); err == nil {
+				latest.Spec.PRNumber = pr
+			}
+		}
 		return r.Update(ctx, latest)
 	}); err != nil {
 		return err

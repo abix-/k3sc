@@ -856,12 +856,16 @@ func FindPodForIssue(ctx context.Context, cs *kubernetes.Clientset, issue int) (
 
 // applyTemplateSubstitutions replaces all __PLACEHOLDER__ tokens in the template.
 // Extracted as a standalone function so it can be unit-tested without a k8s client.
-func applyTemplateSubstitutions(tmpl string, issue, slot int, repoURL, family string) string {
+func applyTemplateSubstitutions(tmpl string, issue, slot int, repoURL, family, jobKind string, prNumber int) string {
 	repoName := repoURL
 	if idx := strings.LastIndex(repoName, "/"); idx >= 0 {
 		repoName = repoName[idx+1:]
 	}
 	repoName = strings.TrimSuffix(repoName, ".git")
+
+	if jobKind == "" {
+		jobKind = "issue"
+	}
 
 	m := strings.ReplaceAll(tmpl, "__ISSUE_NUMBER__", strconv.Itoa(issue))
 	m = strings.ReplaceAll(m, "__AGENT_SLOT__", strconv.Itoa(slot))
@@ -869,12 +873,14 @@ func applyTemplateSubstitutions(tmpl string, issue, slot int, repoURL, family st
 	m = strings.ReplaceAll(m, "__REPO_URL__", repoURL)
 	m = strings.ReplaceAll(m, "__REPO_NAME__", repoName)
 	m = strings.ReplaceAll(m, "__AGENT_FAMILY__", family)
+	m = strings.ReplaceAll(m, "__JOB_KIND__", jobKind)
+	m = strings.ReplaceAll(m, "__PR_NUMBER__", strconv.Itoa(prNumber))
 	return m
 }
 
-func CreateJobFromTemplate(ctx context.Context, cs *kubernetes.Clientset, template string, issue, slot int, repoURL, family string) (string, error) {
+func CreateJobFromTemplate(ctx context.Context, cs *kubernetes.Clientset, template string, issue, slot int, repoURL, family, jobKind string, prNumber int) (string, error) {
 	timestamp := time.Now().Unix()
-	manifest := applyTemplateSubstitutions(template, issue, slot, repoURL, family)
+	manifest := applyTemplateSubstitutions(template, issue, slot, repoURL, family, jobKind, prNumber)
 	manifest = strings.Replace(manifest,
 		fmt.Sprintf(`name: "%s-issue-%d"`, family, issue),
 		fmt.Sprintf(`name: "%s-issue-%d-%d"`, family, issue, timestamp),

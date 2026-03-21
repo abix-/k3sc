@@ -283,6 +283,24 @@ func HasOpenPR(ctx context.Context, repo types.Repo, issueNumber int) (bool, err
 	return len(prs) > 0, nil
 }
 
+// GetOpenPRNumber returns the PR number for an issue-N branch, or 0 if none.
+func GetOpenPRNumber(ctx context.Context, repo types.Repo, issueNumber int) (int, error) {
+	client := newClient(ctx)
+	branch := fmt.Sprintf("issue-%d", issueNumber)
+	prs, _, err := client.PullRequests.List(ctx, repo.Owner, repo.Name, &gh.PullRequestListOptions{
+		State:       "open",
+		Head:        fmt.Sprintf("%s:%s", repo.Owner, branch),
+		ListOptions: gh.ListOptions{PerPage: 1},
+	})
+	if err != nil {
+		return 0, err
+	}
+	if len(prs) == 0 {
+		return 0, nil
+	}
+	return prs[0].GetNumber(), nil
+}
+
 // PostComment posts a comment on a GitHub issue.
 func PostComment(ctx context.Context, repo types.Repo, issueNumber int, body string) error {
 	client := newClient(ctx)
@@ -342,4 +360,21 @@ func GetReadyIssues(ctx context.Context) ([]types.Issue, error) {
 		}
 	}
 	return ready, nil
+}
+
+// GetNeedsReviewIssues returns issues with the "needs-review" label.
+// Used by the scheduler to intake review jobs for agent-assisted review.
+func GetNeedsReviewIssues(ctx context.Context) ([]types.Issue, error) {
+	all, err := GetAllOpenIssues(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var result []types.Issue
+	for _, i := range all {
+		if i.State == "needs-review" {
+			result = append(result, i)
+		}
+	}
+	return result, nil
 }

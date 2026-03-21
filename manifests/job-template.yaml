@@ -40,6 +40,10 @@ spec:
               value: "__REPO_URL__"
             - name: AGENT_FAMILY
               value: "__AGENT_FAMILY__"
+            - name: JOB_KIND
+              value: "__JOB_KIND__"
+            - name: PR_NUMBER
+              value: "__PR_NUMBER__"
             - name: CLAUDE_CODE_OAUTH_TOKEN
               valueFrom:
                 secretKeyRef:

@@ -138,7 +138,11 @@ func (r *Reconciler) handleAssigned(ctx context.Context, task *AgentJob) (ctrl.R
 		return ctrl.Result{RequeueAfter: RequeueDelay}, nil
 	}
 
-	jobName, err := k8s.CreateJobFromTemplate(ctx, r.K8s, r.Template, task.Spec.IssueNumber, task.Status.Slot, task.Spec.RepoURL, taskFamily(task))
+	jobKind := "issue"
+	if task.Spec.OriginState == "needs-review" {
+		jobKind = "review"
+	}
+	jobName, err := k8s.CreateJobFromTemplate(ctx, r.K8s, r.Template, task.Spec.IssueNumber, task.Status.Slot, task.Spec.RepoURL, taskFamily(task), jobKind, task.Spec.PRNumber)
 	if err != nil {
 		r.errf(ctx, err, task, "create job failed")
 		return ctrl.Result{RequeueAfter: RequeueDelay}, err

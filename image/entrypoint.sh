@@ -80,6 +80,17 @@ gh auth status 2>&1 || true
 AGENT_FAMILY="${AGENT_FAMILY:-claude}"
 echo "[entrypoint] agent family: ${AGENT_FAMILY}"
 
+JOB_KIND="${JOB_KIND:-issue}"
+PR_NUMBER="${PR_NUMBER:-0}"
+echo "[entrypoint] job_kind=${JOB_KIND} pr=${PR_NUMBER}"
+
+# build prompt based on job kind
+if [ "$JOB_KIND" = "review" ]; then
+    SKILL_PROMPT="/review ${REPO_NAME} ${PR_NUMBER}"
+else
+    SKILL_PROMPT="/issue ${REPO_NAME} ${ISSUE_NUMBER}"
+fi
+
 if [ "$AGENT_FAMILY" = "codex" ]; then
     if [ -z "${OPENAI_API_KEY:-}" ] && [ ! -s "${HOME}/.codex/auth.json" ]; then
         echo "[entrypoint] ERROR: Codex auth is required via OPENAI_API_KEY or CODEX_AUTH_JSON"
@@ -90,8 +101,9 @@ if [ "$AGENT_FAMILY" = "codex" ]; then
     codex --version 2>&1 || true
     codex login status 2>&1 || true
 
-    echo "[entrypoint] launching codex for ${REPO_NAME}#${ISSUE_NUMBER}..."
-    codex exec --dangerously-bypass-approvals-and-sandbox "/issue ${REPO_NAME} ${ISSUE_NUMBER}" 2>&1
+    echo "[entrypoint] launching codex for ${REPO_NAME}#${ISSUE_NUMBER} (${JOB_KIND})..."
+    codex exec --dangerously-bypass-approvals-and-sandbox "/obey
+${SKILL_PROMPT}" 2>&1
     EXIT_CODE=$?
 else
     if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
@@ -102,9 +114,9 @@ else
     echo "[entrypoint] verifying claude auth..."
     claude --version 2>&1 || true
 
-    echo "[entrypoint] launching claude for ${REPO_NAME}#${ISSUE_NUMBER}..."
+    echo "[entrypoint] launching claude for ${REPO_NAME}#${ISSUE_NUMBER} (${JOB_KIND})..."
     claude --dangerously-skip-permissions -p "/obey
-/issue ${REPO_NAME} ${ISSUE_NUMBER}" \
+${SKILL_PROMPT}" \
         --output-format stream-json --verbose --include-partial-messages 2>&1 | \
         while IFS= read -r line || [ -n "$line" ]; do
             if parsed=$(printf '%s\n' "$line" | jq -rj 'if .type == "stream_event" and .event.delta.type? == "text_delta" then .event.delta.text

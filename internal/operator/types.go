@@ -37,7 +37,8 @@ type AgentJobSpec struct {
 	Repo        string `json:"repo"`     // e.g. "abix-/endless"
 	RepoName    string `json:"repoName"` // e.g. "endless"
 	IssueNumber int    `json:"issueNumber"`
-	RepoURL     string `json:"repoURL"` // clone URL
+	PRNumber    int    `json:"prNumber,omitempty"` // set for review jobs (needs-review origin)
+	RepoURL     string `json:"repoURL"`            // clone URL
 	// Slot/Agent/Family are operator-assigned dispatch hints kept in spec for
 	// compatibility with older objects and to survive create-before-status-update races.
 	Slot        int    `json:"slot,omitempty"`
