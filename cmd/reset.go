@@ -43,13 +43,13 @@ func resetIssueLabels(ctx context.Context, repoName string, issue int, targetLab
 	if err != nil {
 		return err
 	}
+	if err := github.SetIssueLabels(ctx, repo, issue, []string{targetLabel}, ""); err != nil {
+		return err
+	}
 	if owner != "" {
-		if err := github.UnclaimIssue(ctx, repo, issue, owner, targetLabel); err != nil {
-			return err
-		}
 		fmt.Printf("issue %d: %s -> %s\n", issue, owner, targetLabel)
 	} else {
-		fmt.Printf("issue %d: not claimed\n", issue)
+		fmt.Printf("issue %d: unclaimed -> %s\n", issue, targetLabel)
 	}
 
 	// delete failed/blocked AgentJobs so the issue isn't stuck at MaxFailures

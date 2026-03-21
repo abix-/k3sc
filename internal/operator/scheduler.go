@@ -10,12 +10,12 @@ import (
 	"github.com/abix-/k3sc/internal/config"
 	"github.com/abix-/k3sc/internal/dispatch"
 	"github.com/abix-/k3sc/internal/github"
-	"github.com/abix-/k3sc/internal/k8s"
 	coretypes "github.com/abix-/k3sc/internal/types"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ktypes "k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -61,6 +61,30 @@ func pickFamily() coretypes.AgentFamily {
 	return f
 }
 
+func pickAvailableFamily(claudeAvailable, codexAvailable bool) (coretypes.AgentFamily, bool) {
+	familyMu.Lock()
+	defer familyMu.Unlock()
+
+	switch {
+	case claudeAvailable && codexAvailable:
+		f := nextFamily
+		if nextFamily == coretypes.FamilyClaude {
+			nextFamily = coretypes.FamilyCodex
+		} else {
+			nextFamily = coretypes.FamilyClaude
+		}
+		return f, true
+	case claudeAvailable:
+		nextFamily = coretypes.FamilyCodex
+		return coretypes.FamilyClaude, true
+	case codexAvailable:
+		nextFamily = coretypes.FamilyClaude
+		return coretypes.FamilyCodex, true
+	default:
+		return "", false
+	}
+}
+
 type DispatchReconciler struct {
 	client.Client
 	APIReader client.Reader
@@ -73,6 +97,12 @@ type issueTaskState struct {
 	Active       *AgentJob
 	FailureCount int
 	failedJobs   int
+}
+
+type scanResult struct {
+	hadWork            bool
+	familyStatuses     []DispatchFamilyStatus
+	reviewReservations []DispatchReviewReservationStatus
 }
 
 func EnsureDispatchState(ctx context.Context, c client.Client, namespace string) error {
@@ -107,30 +137,18 @@ func (r *DispatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	logger := log.FromContext(ctx).WithName("scheduler")
-	hadWork, err := r.scan(ctx)
+	scan, err := r.scan(ctx)
 	if err != nil {
 		logger.Error(err, "scan failed")
 	}
 
 	now := metav1.Now()
-	desired := state.Status
-	desired.LastScanTime = &now
-	desired.ObservedTriggerNonce = state.Spec.TriggerNonce
-	if hadWork {
-		desired.IdleScans = 0
-		desired.LastWorkTime = &now
-	} else {
-		desired.IdleScans++
-	}
-	if err != nil {
-		desired.LastError = err.Error()
-	} else {
-		desired.LastError = ""
-	}
+	desired := desiredDispatchStatus(state.Status, state.Spec.TriggerNonce, scan, err, now)
 
 	if !dispatchStatusEqual(state.Status, desired) {
-		state.Status = desired
-		if updateErr := r.Status().Update(ctx, &state); updateErr != nil {
+		var updateErr error
+		desired, updateErr = r.syncDispatchStatus(ctx, req.NamespacedName, scan, err, now)
+		if updateErr != nil {
 			return ctrl.Result{}, updateErr
 		}
 	}
@@ -147,12 +165,66 @@ func (r *DispatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}, nil
 }
 
+func desiredDispatchStatus(base DispatchStateStatus, triggerNonce int64, scan scanResult, scanErr error, now metav1.Time) DispatchStateStatus {
+	desired := base
+	desired.LastScanTime = &now
+	desired.ObservedTriggerNonce = triggerNonce
+	if scan.hadWork {
+		desired.IdleScans = 0
+		desired.LastWorkTime = &now
+	} else {
+		desired.IdleScans++
+	}
+	if len(scan.familyStatuses) > 0 {
+		desired.FamilyStatuses = scan.familyStatuses
+	}
+	desired.ReviewReservations = scan.reviewReservations
+	if scanErr != nil {
+		desired.LastError = scanErr.Error()
+	} else {
+		desired.LastError = ""
+	}
+	return desired
+}
+
+func (r *DispatchReconciler) syncDispatchStatus(ctx context.Context, key ktypes.NamespacedName, scan scanResult, scanErr error, now metav1.Time) (DispatchStateStatus, error) {
+	var final DispatchStateStatus
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var latest DispatchState
+		if err := r.Get(ctx, key, &latest); err != nil {
+			return err
+		}
+		desired := desiredDispatchStatus(latest.Status, latest.Spec.TriggerNonce, scan, scanErr, now)
+		final = desired
+		if dispatchStatusEqual(latest.Status, desired) {
+			return nil
+		}
+		latest.Status = desired
+		return r.Status().Update(ctx, &latest)
+	})
+	return final, err
+}
+
 func dispatchStatusEqual(a, b DispatchStateStatus) bool {
 	return a.ObservedTriggerNonce == b.ObservedTriggerNonce &&
 		a.IdleScans == b.IdleScans &&
 		a.LastError == b.LastError &&
+		sameFamilyStatuses(a.FamilyStatuses, b.FamilyStatuses) &&
+		sameReviewReservations(a.ReviewReservations, b.ReviewReservations) &&
 		sameTime(a.LastScanTime, b.LastScanTime) &&
 		sameTime(a.LastWorkTime, b.LastWorkTime)
+}
+
+func sameFamilyStatuses(a, b []DispatchFamilyStatus) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func sameTime(a, b *metav1.Time) bool {
@@ -180,29 +252,45 @@ func nextDispatchInterval(minInterval, maxInterval time.Duration, idleScans int)
 	return interval
 }
 
-func (r *DispatchReconciler) scan(ctx context.Context) (bool, error) {
+func (r *DispatchReconciler) scan(ctx context.Context) (scanResult, error) {
 	tasks, groups, err := r.loadTaskState(ctx)
 	if err != nil {
-		return false, err
+		return scanResult{}, err
 	}
 
 	r.cleanupTerminalTasks(ctx, tasks)
 
-	usagePod, _, err := k8s.FindRecentUsageLimitPod(ctx, r.K8s, usageLimitLookback)
+	reviewReservations, reviewReservationsByIssue, err := r.loadReviewReservations(ctx)
 	if err != nil {
-		olog("scheduler", "usage limit check error: %v", err)
+		return scanResult{}, err
 	}
-	if usagePod != nil {
-		olog("scheduler", "usage limit detected in pod %s (%s#%d), skipping dispatch", usagePod.Name, usagePod.Repo.Name, usagePod.Issue)
-		return false, nil
+
+	familyStates, warnings := probeFamilyDispatchStates(ctx, r.K8s, usageLimitLookback)
+	result := scanResult{
+		familyStatuses:     dispatchFamilyStatuses(familyStates),
+		reviewReservations: reviewReservations,
+	}
+	for _, warning := range warnings {
+		olog("scheduler", "%s", warning)
+	}
+
+	claudeAvailable := familyStates[coretypes.FamilyClaude].Available
+	codexAvailable := familyStates[coretypes.FamilyCodex].Available
+	for _, family := range []coretypes.AgentFamily{coretypes.FamilyClaude, coretypes.FamilyCodex} {
+		if state := familyStates[family]; !state.Available {
+			olog("scheduler", "%s dispatch blocked: %s", family, state.Reason)
+		}
+	}
+	if !claudeAvailable && !codexAvailable {
+		olog("scheduler", "all agent families blocked by quota, skipping dispatch")
+		return result, nil
 	}
 
 	maxSlots := dispatch.MaxSlots()
 	usedSlots := usedSlotsFromGroups(groups)
-	hadWork := false
 
 	// phase 1: re-dispatch from CRD state (needs-review and ready retries)
-	for key, group := range groups {
+	for _, group := range groups {
 		if group == nil || group.Current == nil || group.Active != nil {
 			continue
 		}
@@ -210,12 +298,17 @@ func (r *DispatchReconciler) scan(ctx context.Context) (bool, error) {
 			continue
 		}
 		if group.FailureCount >= MaxFailures {
-			olog("scheduler", "%s blocked after %d failures", key, group.FailureCount)
 			continue
 		}
 		nextAction := group.Current.Status.NextAction
 		if nextAction != "needs-review" && nextAction != "ready" {
 			continue
+		}
+		if nextAction == "needs-review" {
+			if _, blocked := reviewReservationsByIssue[issueKey(group.Current.Spec.Repo, group.Current.Spec.IssueNumber)]; blocked {
+				olog("scheduler", "skip %s redispatch: local PR review lease active", group.Current.Name)
+				continue
+			}
 		}
 
 		slot := dispatch.FindFreeSlotFromList(usedSlots, maxSlots)
@@ -224,7 +317,11 @@ func (r *DispatchReconciler) scan(ctx context.Context) (bool, error) {
 			break
 		}
 
-		family := pickFamily()
+		family, ok := pickAvailableFamily(claudeAvailable, codexAvailable)
+		if !ok {
+			olog("scheduler", "no dispatchable agent family")
+			break
+		}
 		agent := coretypes.AgentName(family, slot)
 		// build a synthetic issue for requeueTask
 		repo := dispatch.RepoFromString(group.Current.Spec.Repo)
@@ -240,13 +337,13 @@ func (r *DispatchReconciler) scan(ctx context.Context) (bool, error) {
 		olog("scheduler", "redispatch %s -> %s (slot %d, %s)", group.Current.Name, nextAction, slot, agent)
 		usedSlots = append(usedSlots, slot)
 		group.Active = &AgentJob{Spec: AgentJobSpec{Slot: slot, Agent: agent}}
-		hadWork = true
+		result.hadWork = true
 	}
 
 	// phase 2: intake new issues with "ready" label from GitHub
 	ready, err := github.GetReadyIssues(ctx)
 	if err != nil {
-		return hadWork, err
+		return result, err
 	}
 
 	for _, issue := range ready {
@@ -261,7 +358,6 @@ func (r *DispatchReconciler) scan(ctx context.Context) (bool, error) {
 			continue
 		}
 		if group != nil && group.FailureCount >= MaxFailures {
-			olog("scheduler", "%s blocked after %d failures", key, group.FailureCount)
 			continue
 		}
 		// skip if already has a reported terminal task (already processed)
@@ -275,7 +371,11 @@ func (r *DispatchReconciler) scan(ctx context.Context) (bool, error) {
 			break
 		}
 
-		family := pickFamily()
+		family, ok := pickAvailableFamily(claudeAvailable, codexAvailable)
+		if !ok {
+			olog("scheduler", "no dispatchable agent family")
+			break
+		}
 		agent := coretypes.AgentName(family, slot)
 		if group != nil && group.Current != nil {
 			if err := r.requeueTask(ctx, group.Current, issue, slot, agent, string(family), group.FailureCount); err != nil {
@@ -298,10 +398,10 @@ func (r *DispatchReconciler) scan(ctx context.Context) (bool, error) {
 			groups[key] = group
 		}
 		group.Active = &AgentJob{Spec: AgentJobSpec{Slot: slot, Agent: agent}}
-		hadWork = true
+		result.hadWork = true
 	}
 
-	return hadWork, nil
+	return result, nil
 }
 
 func (r *DispatchReconciler) loadTaskState(ctx context.Context) ([]AgentJob, map[string]*issueTaskState, error) {
@@ -464,38 +564,47 @@ func (r *DispatchReconciler) createTask(ctx context.Context, issue coretypes.Iss
 		}
 		return "", err
 	}
-	if err := r.setTaskPending(ctx, task, 0); err != nil {
-		return "", err
-	}
 	return task.Name, nil
 }
 
 func (r *DispatchReconciler) requeueTask(ctx context.Context, task *AgentJob, issue coretypes.Issue, slot int, agent, family string, failureCount int) error {
-	updated := task.DeepCopyObject().(*AgentJob)
-	updated.Spec.Repo = fullRepo(issue.Repo)
-	updated.Spec.RepoName = issue.Repo.Name
-	updated.Spec.IssueNumber = issue.Number
-	updated.Spec.RepoURL = issue.Repo.CloneURL()
-	updated.Spec.Slot = slot
-	updated.Spec.Agent = agent
-	updated.Spec.Family = family
-	updated.Spec.OriginState = issue.State
-	if err := r.Update(ctx, updated); err != nil {
+	key := client.ObjectKeyFromObject(task)
+	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest := &AgentJob{}
+		if err := r.Get(ctx, key, latest); err != nil {
+			return err
+		}
+		latest.Spec.Repo = fullRepo(issue.Repo)
+		latest.Spec.RepoName = issue.Repo.Name
+		latest.Spec.IssueNumber = issue.Number
+		latest.Spec.RepoURL = issue.Repo.CloneURL()
+		latest.Spec.Slot = slot
+		latest.Spec.Agent = agent
+		latest.Spec.Family = family
+		latest.Spec.OriginState = issue.State
+		return r.Update(ctx, latest)
+	}); err != nil {
 		return err
 	}
-	return r.setTaskPending(ctx, updated, failureCount)
+	return r.setTaskPending(ctx, key, failureCount)
 }
 
-func (r *DispatchReconciler) setTaskPending(ctx context.Context, task *AgentJob, failureCount int) error {
-	latest := &AgentJob{}
-	if err := r.Get(ctx, client.ObjectKeyFromObject(task), latest); err != nil {
-		return err
-	}
-	latest.Status = AgentJobStatus{
-		Phase:        TaskPhasePending,
-		FailureCount: failureCount,
-	}
-	return r.Status().Update(ctx, latest)
+func (r *DispatchReconciler) setTaskPending(ctx context.Context, key client.ObjectKey, failureCount int) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest := &AgentJob{}
+		if err := r.Get(ctx, key, latest); err != nil {
+			return err
+		}
+		desired := AgentJobStatus{
+			Phase:        TaskPhasePending,
+			FailureCount: failureCount,
+		}
+		if latest.Status == desired {
+			return nil
+		}
+		latest.Status = desired
+		return r.Status().Update(ctx, latest)
+	})
 }
 
 func (r *DispatchReconciler) cleanupTerminalTasks(ctx context.Context, tasks []AgentJob) {

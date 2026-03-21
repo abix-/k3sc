@@ -23,6 +23,7 @@ type LiveLog struct {
 type Data struct {
 	NodeName    string
 	NodeVersion string
+	Dispatch    types.DispatchStateInfo
 	Pods        []types.AgentPod
 	Tasks       []types.TaskInfo
 	Issues      []types.Issue
@@ -209,9 +210,9 @@ func (m Model) View() string {
 		h = 50
 	}
 
-	// try full output, then reduce agents until it fits
-	for maxPods := len(m.data.Pods); maxPods >= 0; maxPods-- {
-		result := m.renderView(maxPods)
+	// try full output, then reduce operator tasks until it fits
+	for maxTasks := len(m.data.Tasks); maxTasks >= 0; maxTasks-- {
+		result := m.renderView(maxTasks)
 		lines := strings.Count(result, "\n") + 1
 		if lines <= h {
 			return result
@@ -294,7 +295,7 @@ func (m Model) renderLogView() string {
 	return strings.Join(sections, "\n")
 }
 
-func (m Model) renderView(maxVisiblePods int) string {
+func (m Model) renderView(maxVisibleTasks int) string {
 	d := m.data
 	w := m.width
 	if w < 80 {
@@ -319,9 +320,59 @@ func (m Model) renderView(maxVisiblePods int) string {
 	if m.paused {
 		pauseStr = "  |  PAUSED"
 	}
-	clusterContent := fmt.Sprintf(" Node: %s %s  |  Agents: %d running, %d completed  |  Max slots: %d%s",
-		d.NodeName, d.NodeVersion, running, completed, m.maxSlots, pauseStr)
+	clusterContent := fmt.Sprintf(" Node: %s %s  |  Agents: %d running, %d completed, %d failed  |  Max slots: %d%s",
+		d.NodeName, d.NodeVersion, running, completed, failed, m.maxSlots, pauseStr)
 	sections = append(sections, titleFg.Render(" Cluster")+" "+clusterContent)
+
+	var quotaLines []string
+	if len(d.Dispatch.FamilyStatuses) == 0 {
+		quotaLines = append(quotaLines, dim.Render("  (quota unknown)"))
+	} else {
+		for _, status := range orderedFamilyStatuses(d.Dispatch.FamilyStatuses) {
+			reason := ""
+			if status.Reason != "" {
+				reason = "  " + format.Truncate(status.Reason, w-22)
+			}
+			line := fmt.Sprintf("  %-6s ", status.Family)
+			switch {
+			case !status.Available:
+				quotaLines = append(quotaLines, red.Render(line+"BLOCKED"+reason))
+			case status.Checked:
+				quotaLines = append(quotaLines, green.Render(line+"OK"+reason))
+			default:
+				quotaLines = append(quotaLines, yellow.Render(line+"UNKNOWN"+reason))
+			}
+		}
+	}
+	sections = append(sections, sep)
+	sections = append(sections, titleFg.Render(" Quota"))
+	sections = append(sections, strings.Join(quotaLines, "\n"))
+
+	// -- local review reservations --
+	var reservationLines []string
+	if len(d.Dispatch.ReviewReservations) == 0 {
+		reservationLines = append(reservationLines, dim.Render("  (no local PR reservations)"))
+	} else {
+		reservationLines = append(reservationLines, titleFg.Render(fmt.Sprintf(" %-12s %-12s %-7s %-8s %-16s %-16s Branch", "Worker", "Repo", "PR", "Issue", "Reserved", "Expires")))
+		for _, res := range d.Dispatch.ReviewReservations {
+			issue := ""
+			if res.Issue > 0 {
+				issue = fmt.Sprintf("#%d", res.Issue)
+			}
+			line := fmt.Sprintf(" %-12s %-12s %-7s %-8s %-16s %-16s %s",
+				res.WorkerID,
+				res.Repo.Name,
+				format.PRLink(res.Repo, res.PRNumber),
+				issue,
+				format.FmtTime(res.ReservedAt),
+				format.FmtTime(res.ExpiresAt),
+				format.Truncate(res.Branch, w-79))
+			reservationLines = append(reservationLines, yellow.Render(line))
+		}
+	}
+	sections = append(sections, sep)
+	sections = append(sections, titleFg.Render(" Local Review"))
+	sections = append(sections, strings.Join(reservationLines, "\n"))
 
 	// -- dispatcher (toggle with d) --
 	if m.showOperator {
@@ -375,79 +426,39 @@ func (m Model) renderView(maxVisiblePods int) string {
 	sections = append(sections, titleFg.Render(" GitHub Issues"))
 	sections = append(sections, strings.Join(issueLines, "\n"))
 
-	// -- agents --
-	var agentLines []string
-	if len(d.Pods) == 0 {
-		agentLines = append(agentLines, dim.Render("  (no agent pods)"))
-	} else {
-		agentLines = append(agentLines, titleFg.Render(fmt.Sprintf(" %-7s %-10s %-8s %-11s %-16s %-10s Last Output", "Issue", "Agent", "Repo", "Status", "Started", "Duration")))
-		visiblePods := d.Pods
-		if len(visiblePods) > maxVisiblePods {
-			var runPods, donePods []types.AgentPod
-			for _, p := range visiblePods {
-				if p.Phase == types.PhaseRunning || p.Phase == types.PhasePending {
-					runPods = append(runPods, p)
-				} else {
-					donePods = append(donePods, p)
-				}
-			}
-			keep := maxVisiblePods - len(runPods)
-			if keep < 0 {
-				keep = 0
-			}
-			if len(donePods) > keep {
-				donePods = donePods[len(donePods)-keep:]
-			}
-			visiblePods = append(runPods, donePods...)
-		}
-		for _, pod := range visiblePods {
-			agent := types.AgentName(pod.Family, pod.Slot)
-			started := format.FmtTime(pod.Started)
-			duration := format.FmtDuration(pod.Started, pod.Finished)
-			tail := format.Truncate(pod.LogTail, w-74)
-			line := fmt.Sprintf(" %s %-10s %-8s %-11s %-16s %-10s %s",
-				format.IssueLink(pod.Repo, pod.Issue), agent, pod.Repo.Name, pod.Phase.Display(), started, duration, tail)
-			switch pod.Phase {
-			case types.PhaseRunning, types.PhasePending:
-				agentLines = append(agentLines, green.Render(line))
-			case types.PhaseFailed:
-				agentLines = append(agentLines, red.Render(line))
-			default:
-				agentLines = append(agentLines, dim.Render(line))
-			}
+	// -- operator tasks --
+	var taskLines []string
+	tRunning, tDone, tFailed, tBlocked := 0, 0, 0, 0
+	for _, t := range d.Tasks {
+		switch t.Phase {
+		case "Running", "Pending":
+			tRunning++
+		case "Succeeded":
+			tDone++
+		case "Failed":
+			tFailed++
+		case "Blocked":
+			tBlocked++
 		}
 	}
-	agentTitle := fmt.Sprintf(" Agents (%d running, %d completed, %d failed)", running, completed, failed)
-	sections = append(sections, sep)
-	sections = append(sections, titleFg.Render(agentTitle))
-	sections = append(sections, strings.Join(agentLines, "\n"))
-
-	// -- operator tasks --
-	if len(d.Tasks) > 0 {
-		var taskLines []string
-		tRunning, tDone, tFailed, tBlocked := 0, 0, 0, 0
-		for _, t := range d.Tasks {
-			switch t.Phase {
-			case "Running", "Pending":
-				tRunning++
-			case "Succeeded":
-				tDone++
-			case "Failed":
-				tFailed++
-			case "Blocked":
-				tBlocked++
-			}
+	if len(d.Tasks) == 0 {
+		taskLines = append(taskLines, dim.Render("  (no operator tasks)"))
+	} else {
+		taskLines = append(taskLines, titleFg.Render(fmt.Sprintf(" %-7s %-10s %-10s %-10s %-10s %-16s %-10s %-13s Last Output", "Issue", "Repo", "Agent", "Task", "Runtime", "Started", "Duration", "Next")))
+		visibleTasks := d.Tasks
+		if len(visibleTasks) > maxVisibleTasks {
+			visibleTasks = visibleTasks[:maxVisibleTasks]
 		}
-		taskLines = append(taskLines, titleFg.Render(fmt.Sprintf(" %-7s %-10s %-10s %-11s %-16s %-10s %-13s", "Issue", "Repo", "Agent", "Phase", "Started", "Duration", "Next")))
-		maxTasks := len(d.Tasks)
-		if maxTasks > 10 {
-			maxTasks = 10
-		}
-		for _, t := range d.Tasks[:maxTasks] {
+		for _, t := range visibleTasks {
 			started := format.FmtTime(t.Started)
 			duration := format.FmtDuration(t.Started, t.Finished)
-			line := fmt.Sprintf(" %-7s %-10s %-10s %-11s %-16s %-10s %s",
-				fmt.Sprintf("#%d", t.Issue), t.Repo.Name, t.Agent, t.Phase, started, duration, t.NextAction)
+			runtime := "-"
+			if t.RuntimePhase != "" {
+				runtime = t.RuntimePhase.Display()
+			}
+			tail := format.Truncate(t.LogTail, w-96)
+			line := fmt.Sprintf(" %-7s %-10s %-10s %-10s %-10s %-16s %-10s %-13s %s",
+				fmt.Sprintf("#%d", t.Issue), t.Repo.Name, t.Agent, t.Phase, runtime, started, duration, t.NextAction, tail)
 			switch t.Phase {
 			case "Running", "Pending":
 				taskLines = append(taskLines, green.Render(line))
@@ -459,18 +470,18 @@ func (m Model) renderView(maxVisiblePods int) string {
 				taskLines = append(taskLines, dim.Render(line))
 			}
 		}
-		taskTitle := fmt.Sprintf(" Operator Tasks (%d running, %d done, %d failed, %d blocked)", tRunning, tDone, tFailed, tBlocked)
-		sections = append(sections, sep)
-		sections = append(sections, titleFg.Render(taskTitle))
-		sections = append(sections, strings.Join(taskLines, "\n"))
 	}
+	taskTitle := fmt.Sprintf(" Operator Tasks (%d running, %d done, %d failed, %d blocked)", tRunning, tDone, tFailed, tBlocked)
+	sections = append(sections, sep)
+	sections = append(sections, titleFg.Render(taskTitle))
+	sections = append(sections, strings.Join(taskLines, "\n"))
 
 	// -- pull requests --
 	var prLines []string
 	if len(d.PRs) == 0 {
 		prLines = append(prLines, dim.Render("  (no open pull requests)"))
 	} else {
-		prLines = append(prLines, titleFg.Render(fmt.Sprintf(" %-3s %-7s %-12s %-7s %-20s Title", "#", "PR", "Repo", "Issue", "Branch")))
+		prLines = append(prLines, titleFg.Render(fmt.Sprintf(" %-3s %-7s %-12s %-12s %-7s %-20s Title", "#", "PR", "Repo", "Owner", "Issue", "Branch")))
 		maxPRs := min(len(d.PRs), 6)
 		for idx, pr := range d.PRs[:maxPRs] {
 			pl := format.PRLink(pr.Repo, pr.Number)
@@ -478,8 +489,12 @@ func (m Model) renderView(maxVisiblePods int) string {
 			if pr.Issue > 0 {
 				issueRef = format.IssueLink(pr.Repo, pr.Issue)
 			}
-			line := fmt.Sprintf(" %-3d %s %-12s %-7s %-20s %s", idx+1, pl, pr.Repo.Name, issueRef, format.Truncate(pr.Branch, 20), format.Truncate(pr.Title, w-61))
-			prLines = append(prLines, cyan.Render(line))
+			line := fmt.Sprintf(" %-3d %s %-12s %-12s %-7s %-20s %s", idx+1, pl, pr.Repo.Name, pr.Owner, issueRef, format.Truncate(pr.Branch, 20), format.Truncate(pr.Title, w-74))
+			if pr.Owner != "" {
+				prLines = append(prLines, yellow.Render(line))
+			} else {
+				prLines = append(prLines, cyan.Render(line))
+			}
 		}
 	}
 	sections = append(sections, sep)
@@ -541,4 +556,24 @@ func wordWrap(s string, width int) []string {
 		lines = append(lines, s)
 	}
 	return lines
+}
+
+func orderedFamilyStatuses(statuses []types.DispatchFamilyStatus) []types.DispatchFamilyStatus {
+	byFamily := map[types.AgentFamily]types.DispatchFamilyStatus{}
+	for _, status := range statuses {
+		byFamily[status.Family] = status
+	}
+
+	var ordered []types.DispatchFamilyStatus
+	for _, family := range []types.AgentFamily{types.FamilyClaude, types.FamilyCodex} {
+		if status, ok := byFamily[family]; ok {
+			ordered = append(ordered, status)
+		}
+	}
+	for _, status := range statuses {
+		if status.Family != types.FamilyClaude && status.Family != types.FamilyCodex {
+			ordered = append(ordered, status)
+		}
+	}
+	return ordered
 }

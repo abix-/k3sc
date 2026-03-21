@@ -1,6 +1,10 @@
 package types
 
-import "time"
+import (
+	"strconv"
+	"strings"
+	"time"
+)
 
 // Namespace and Repos are set by config.Load() at startup.
 // Defaults here match the config defaults as a safety net.
@@ -31,6 +35,8 @@ const (
 	FamilyCodex  AgentFamily = "codex"
 )
 
+var LocalReviewLeaseTTL = 12 * time.Hour
+
 // SlotLetter converts a 1-based slot number to a letter (1=a, 2=b, ..., 26=z).
 func SlotLetter(slot int) string {
 	if slot < 1 || slot > 26 {
@@ -42,6 +48,18 @@ func SlotLetter(slot int) string {
 // AgentName returns the agent ID for a k3s slot (e.g. "claude-a", "codex-b").
 func AgentName(family AgentFamily, slot int) string {
 	return string(family) + "-" + SlotLetter(slot)
+}
+
+func ParseWorkerFamily(workerID string) (AgentFamily, bool) {
+	workerID = strings.ToLower(strings.TrimSpace(workerID))
+	switch {
+	case strings.HasPrefix(workerID, "claude-") && len(workerID) > len("claude-"):
+		return FamilyClaude, true
+	case strings.HasPrefix(workerID, "codex-") && len(workerID) > len("codex-"):
+		return FamilyCodex, true
+	default:
+		return "", false
+	}
 }
 
 type PodPhase string
@@ -98,16 +116,43 @@ func RepoByName(name string) Repo {
 
 // TaskInfo is a TUI-friendly view of an AgentJob CR.
 type TaskInfo struct {
+	Name         string
+	Repo         Repo
+	Issue        int
+	Phase        string // Pending, Running, Succeeded, Failed, Blocked
+	Agent        string
+	Slot         int
+	NextAction   string
+	Started      *time.Time
+	Finished     *time.Time
+	RuntimePhase PodPhase
+	LogTail      string
+}
+
+type DispatchFamilyStatus struct {
+	Family    AgentFamily
+	Available bool
+	Checked   bool
+	Reason    string
+}
+
+type DispatchStateInfo struct {
+	FamilyStatuses     []DispatchFamilyStatus
+	ReviewReservations []ReviewReservation
+}
+
+type ReviewReservation struct {
 	Name       string
 	Repo       Repo
+	PRNumber   int
+	PRURL      string
+	Branch     string
 	Issue      int
-	Phase      string // Pending, Running, Succeeded, Failed, Blocked
-	Agent      string
-	Slot       int
-	NextAction string
-	Started    *time.Time
-	Finished   *time.Time
-	LogTail    string
+	Family     AgentFamily
+	WorkerID   string
+	WorkerKind string
+	ReservedAt *time.Time
+	ExpiresAt  *time.Time
 }
 
 func (t TaskInfo) PhaseOrder() int {
@@ -141,5 +186,29 @@ type PullRequest struct {
 	State  string // OPEN, MERGED, CLOSED
 	Branch string
 	Issue  int // linked issue number (from branch name issue-N)
+	Owner  string
 	Repo   Repo
+}
+
+func ReviewLeaseName(repo Repo, prNumber int) string {
+	return "review-" + sanitizeForName(repo.Owner) + "-" + sanitizeForName(repo.Name) + "-pr-" + strconv.Itoa(prNumber)
+}
+
+func sanitizeForName(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	lastDash := false
+	for _, r := range s {
+		isAlphaNum := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if isAlphaNum {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }

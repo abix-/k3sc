@@ -85,21 +85,28 @@ func GetOpenPRs(ctx context.Context) ([]types.PullRequest, error) {
 
 		for _, pr := range prs {
 			branch := pr.GetHead().GetRef()
-			issueNum := 0
-			if strings.HasPrefix(branch, "issue-") {
-				fmt.Sscanf(branch, "issue-%d", &issueNum)
-			}
+			issueNum := ParseBranchIssueNumber(branch)
+			_, owner := parseIssueLabels(pr.Labels)
 			result = append(result, types.PullRequest{
 				Number: pr.GetNumber(),
 				Title:  pr.GetTitle(),
 				State:  pr.GetState(),
 				Branch: branch,
 				Issue:  issueNum,
+				Owner:  owner,
 				Repo:   repo,
 			})
 		}
 	}
 	return result, nil
+}
+
+func ParseBranchIssueNumber(branch string) int {
+	issueNum := 0
+	if strings.HasPrefix(branch, "issue-") {
+		fmt.Sscanf(branch, "issue-%d", &issueNum)
+	}
+	return issueNum
 }
 
 // GetAllOpenIssues fetches open issues with workflow labels from all repos.
@@ -215,6 +222,39 @@ func ClaimIssue(ctx context.Context, repo types.Repo, issueNumber int, agentName
 // UnclaimIssue removes owner label and sets a workflow state label.
 func UnclaimIssue(ctx context.Context, repo types.Repo, issueNumber int, ownerLabel, returnLabel string) error {
 	return SetIssueLabels(ctx, repo, issueNumber, []string{returnLabel}, "")
+}
+
+func setOwnerLabel(ctx context.Context, repo types.Repo, number int, ownerLabel string) error {
+	client := newClient(ctx)
+
+	issue, _, err := client.Issues.Get(ctx, repo.Owner, repo.Name, number)
+	if err != nil {
+		return fmt.Errorf("get issue: %w", err)
+	}
+
+	for _, l := range issue.Labels {
+		name := l.GetName()
+		if strings.HasPrefix(name, "claude-") || strings.HasPrefix(name, "codex-") {
+			if _, err := client.Issues.RemoveLabelForIssue(ctx, repo.Owner, repo.Name, number, name); err != nil {
+				return fmt.Errorf("remove owner label %q: %w", name, err)
+			}
+		}
+	}
+
+	if ownerLabel != "" {
+		if _, _, err := client.Issues.AddLabelsToIssue(ctx, repo.Owner, repo.Name, number, []string{ownerLabel}); err != nil {
+			return fmt.Errorf("add owner label: %w", err)
+		}
+	}
+	return nil
+}
+
+func ClaimPullRequest(ctx context.Context, repo types.Repo, prNumber int, ownerLabel string) error {
+	return setOwnerLabel(ctx, repo, prNumber, ownerLabel)
+}
+
+func UnclaimPullRequest(ctx context.Context, repo types.Repo, prNumber int) error {
+	return setOwnerLabel(ctx, repo, prNumber, "")
 }
 
 // HasOpenPR checks if there's an open PR for a given issue-N branch.

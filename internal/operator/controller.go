@@ -233,6 +233,9 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *AgentJob) (ctrl.
 
 	task.Status.Reported = true
 	r.logf(ctx, task, "%s (origin=%s) -> %s%s", status, task.Spec.OriginState, task.Status.NextAction, duration)
+	if !succeeded && task.Status.FailureCount >= MaxFailures {
+		r.logf(ctx, task, "blocked after %d failures", task.Status.FailureCount)
+	}
 
 	return ctrl.Result{}, r.Status().Update(ctx, task)
 }

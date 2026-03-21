@@ -93,3 +93,20 @@ func TestDispatchTrustReason(t *testing.T) {
 		})
 	}
 }
+
+func TestParseBranchIssueNumber(t *testing.T) {
+	tests := []struct {
+		branch string
+		want   int
+	}{
+		{branch: "issue-194", want: 194},
+		{branch: "feature/foo", want: 0},
+		{branch: "issue-not-a-number", want: 0},
+	}
+
+	for _, tc := range tests {
+		if got := ParseBranchIssueNumber(tc.branch); got != tc.want {
+			t.Fatalf("ParseBranchIssueNumber(%q) = %d, want %d", tc.branch, got, tc.want)
+		}
+	}
+}

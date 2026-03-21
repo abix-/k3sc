@@ -25,7 +25,12 @@ if [ ! -d "${HOME}/.rustup" ]; then
     ln -sf /usr/local/rustup "${HOME}/.rustup"
 fi
 export PATH="${CARGO_HOME}/bin:${PATH}"
-mkdir -p "${HOME}/.codex"
+install -d -m 700 "${HOME}/.codex" 2>/dev/null || true
+if [ ! -d "${HOME}/.codex" ] || [ ! -w "${HOME}/.codex" ]; then
+    echo "[entrypoint] ERROR: ${HOME}/.codex must be writable for auth bootstrap"
+    ls -ld "${HOME}" "${HOME}/.codex" 2>/dev/null || true
+    exit 1
+fi
 
 # trust all workspaces (PVC may have been created by different uid)
 git config --global --add safe.directory '*'
@@ -54,7 +59,11 @@ git config user.email "${AGENT_ID}@endless.dev"
 
 # materialize Codex auth state from secret-backed env if present
 if [ -n "${CODEX_AUTH_JSON:-}" ]; then
-    printf '%s' "${CODEX_AUTH_JSON}" > "${HOME}/.codex/auth.json"
+    if ! printf '%s' "${CODEX_AUTH_JSON}" > "${HOME}/.codex/auth.json"; then
+        echo "[entrypoint] ERROR: failed to write ${HOME}/.codex/auth.json"
+        ls -ld "${HOME}" "${HOME}/.codex" 2>/dev/null || true
+        exit 1
+    fi
     chmod 600 "${HOME}/.codex/auth.json"
 fi
 

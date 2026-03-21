@@ -18,6 +18,8 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&AgentJobList{},
 		&DispatchState{},
 		&DispatchStateList{},
+		&ReviewLease{},
+		&ReviewLeaseList{},
 	)
 	metav1.AddToGroupVersion(scheme, GroupVersion)
 	return nil
@@ -92,18 +94,72 @@ type DispatchStateSpec struct {
 	TriggerNonce int64 `json:"triggerNonce,omitempty"`
 }
 
+type DispatchFamilyStatus struct {
+	Family    string `json:"family"`
+	Available bool   `json:"available"`
+	Checked   bool   `json:"checked,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
 type DispatchStateStatus struct {
-	ObservedTriggerNonce int64        `json:"observedTriggerNonce,omitempty"`
-	IdleScans            int          `json:"idleScans,omitempty"`
-	LastError            string       `json:"lastError,omitempty"`
-	LastScanTime         *metav1.Time `json:"lastScanTime,omitempty"`
-	LastWorkTime         *metav1.Time `json:"lastWorkTime,omitempty"`
+	ObservedTriggerNonce int64                             `json:"observedTriggerNonce,omitempty"`
+	IdleScans            int                               `json:"idleScans,omitempty"`
+	LastError            string                            `json:"lastError,omitempty"`
+	LastScanTime         *metav1.Time                      `json:"lastScanTime,omitempty"`
+	LastWorkTime         *metav1.Time                      `json:"lastWorkTime,omitempty"`
+	FamilyStatuses       []DispatchFamilyStatus            `json:"familyStatuses,omitempty"`
+	ReviewReservations   []DispatchReviewReservationStatus `json:"reviewReservations,omitempty"`
 }
 
 type DispatchStateList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []DispatchState `json:"items"`
+}
+
+type ReviewLease struct {
+	metav1.TypeMeta   `json:",inline"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
+	Spec              ReviewLeaseSpec   `json:"spec"`
+	Status            ReviewLeaseStatus `json:"status,omitempty"`
+}
+
+type ReviewLeaseSpec struct {
+	Repo        string       `json:"repo"`
+	RepoName    string       `json:"repoName"`
+	PRNumber    int          `json:"prNumber"`
+	PRURL       string       `json:"prUrl,omitempty"`
+	Branch      string       `json:"branch,omitempty"`
+	IssueNumber int          `json:"issueNumber,omitempty"`
+	Family      string       `json:"family"`
+	WorkerID    string       `json:"workerId"`
+	WorkerKind  string       `json:"workerKind,omitempty"`
+	ReservedAt  *metav1.Time `json:"reservedAt,omitempty"`
+	ExpiresAt   *metav1.Time `json:"expiresAt,omitempty"`
+}
+
+type ReviewLeaseStatus struct {
+	Phase string `json:"phase,omitempty"`
+}
+
+type ReviewLeaseList struct {
+	metav1.TypeMeta `json:",inline"`
+	metav1.ListMeta `json:"metadata,omitempty"`
+	Items           []ReviewLease `json:"items"`
+}
+
+type DispatchReviewReservationStatus struct {
+	Repo        string       `json:"repo"`
+	RepoName    string       `json:"repoName"`
+	PRNumber    int          `json:"prNumber"`
+	PRURL       string       `json:"prUrl,omitempty"`
+	Branch      string       `json:"branch,omitempty"`
+	IssueNumber int          `json:"issueNumber,omitempty"`
+	Family      string       `json:"family"`
+	WorkerID    string       `json:"workerId"`
+	WorkerKind  string       `json:"workerKind,omitempty"`
+	ReservedAt  *metav1.Time `json:"reservedAt,omitempty"`
+	ExpiresAt   *metav1.Time `json:"expiresAt,omitempty"`
 }
 
 // DeepCopyObject implementations for runtime.Object interface.
@@ -147,6 +203,23 @@ func (in *DispatchState) DeepCopyObject() runtime.Object {
 		t := *in.Status.LastWorkTime
 		out.Status.LastWorkTime = &t
 	}
+	if in.Status.FamilyStatuses != nil {
+		out.Status.FamilyStatuses = append([]DispatchFamilyStatus(nil), in.Status.FamilyStatuses...)
+	}
+	if in.Status.ReviewReservations != nil {
+		out.Status.ReviewReservations = make([]DispatchReviewReservationStatus, len(in.Status.ReviewReservations))
+		copy(out.Status.ReviewReservations, in.Status.ReviewReservations)
+		for i := range out.Status.ReviewReservations {
+			if in.Status.ReviewReservations[i].ReservedAt != nil {
+				t := *in.Status.ReviewReservations[i].ReservedAt
+				out.Status.ReviewReservations[i].ReservedAt = &t
+			}
+			if in.Status.ReviewReservations[i].ExpiresAt != nil {
+				t := *in.Status.ReviewReservations[i].ExpiresAt
+				out.Status.ReviewReservations[i].ExpiresAt = &t
+			}
+		}
+	}
 	return out
 }
 
@@ -158,6 +231,34 @@ func (in *DispatchStateList) DeepCopyObject() runtime.Object {
 		out.Items = make([]DispatchState, len(in.Items))
 		for i := range in.Items {
 			out.Items[i] = *in.Items[i].DeepCopyObject().(*DispatchState)
+		}
+	}
+	return out
+}
+
+func (in *ReviewLease) DeepCopyObject() runtime.Object {
+	out := new(ReviewLease)
+	*out = *in
+	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
+	if in.Spec.ReservedAt != nil {
+		t := *in.Spec.ReservedAt
+		out.Spec.ReservedAt = &t
+	}
+	if in.Spec.ExpiresAt != nil {
+		t := *in.Spec.ExpiresAt
+		out.Spec.ExpiresAt = &t
+	}
+	return out
+}
+
+func (in *ReviewLeaseList) DeepCopyObject() runtime.Object {
+	out := new(ReviewLeaseList)
+	out.TypeMeta = in.TypeMeta
+	out.ListMeta = *in.ListMeta.DeepCopy()
+	if in.Items != nil {
+		out.Items = make([]ReviewLease, len(in.Items))
+		for i := range in.Items {
+			out.Items[i] = *in.Items[i].DeepCopyObject().(*ReviewLease)
 		}
 	}
 	return out

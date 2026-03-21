@@ -25,6 +25,8 @@ The operator runs two reconcilers in one process. A singleton `DispatchState` re
 
 Each agent pod gets a letter-based identity (claude-a, claude-b, ..., claude-z) and its own workspace on a shared PVC.
 
+Windows-side PR review can also be reserved on demand. `k3sc take --worker claude-a` creates a central `ReviewLease` in k3s, mirrors the reservation to the PR via that exact worker label, and keeps the TUI aware of who owns the next manual review. Worker names must start with `claude-` or `codex-`.
+
 ## Subcommands
 
 | Command | Description |
@@ -42,16 +44,19 @@ Each agent pod gets a letter-based identity (claude-a, claude-b, ..., claude-z) 
 | `k3sc resume` | Scale operator to 1 replica |
 | `k3sc next` | Pick a random issue or PR that needs human review |
 | `k3sc launch` | Launch a Windows-side Claude or Codex session in a free slot directory |
+| `k3sc take --worker claude-a` | Reserve the next eligible open PR for a specific local review worker |
+| `k3sc release --repo <repo> --pr <number>` | Release a local PR reservation and clear its owner label |
 
 ## TUI
 
-The `top` command provides a live dashboard with sections for cluster status, operator output, GitHub issues, agent pods with live log tails, and open PRs. Hotkeys:
+The `top` command provides a live dashboard with sections for cluster status, quota, local PR reservations, operator output, GitHub issues, agent pods with live log tails, and open PRs. Hotkeys:
 
 `q` quit | `n` dispatch now | `p` pause | `d` toggle dispatcher | `l` toggle live logs | `r` refresh | `+`/`-` adjust max agents
 
 ## Architecture
 
 - **Operator**: One controller-runtime manager running both the singleton dispatch reconciler and the per-issue `AgentJob` reconciler
+- **Review leases**: Namespaced `ReviewLease` CRDs reserve open PRs for manual Windows review without relying on local lockfiles
 - **Agent pods**: Ubuntu 24.04 with Node.js, Claude Code CLI, Rust toolchain, gh CLI, kubectl
 - **Shared PVCs**: `workspaces` (git clones), `cargo-target` (build artifacts), `cargo-home` (crate registry)
 - **Host mounts**: Claude skills, commands, docs, and CLAUDE.md mounted read-only from the host
@@ -92,6 +97,8 @@ Issues are routed through a state machine via GitHub labels:
 | `needs-human` | Requires human action (merge, design decision) |
 
 The dispatch reconciler only picks up `ready` and `needs-review` issues from configured repos, and only when the issue author is in `allowed_authors` (prioritizing `needs-review`).
+
+Open PR reservations are separate from issue dispatch. They are coordinated through `ReviewLease` CRDs and mirrored to the PR via the exact worker label, such as `claude-a` or `codex-b`.
 
 ## Prerequisites
 

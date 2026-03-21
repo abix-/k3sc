@@ -26,7 +26,7 @@ rules:
     resources: ["cronjobs"]
     verbs: ["get", "list", "watch", "update", "patch"]
   - apiGroups: ["k3sc.abix.dev"]
-    resources: ["agentjobs", "agentjobs/status", "dispatchstates", "dispatchstates/status"]
+    resources: ["agentjobs", "agentjobs/status", "dispatchstates", "dispatchstates/status", "reviewleases", "reviewleases/status"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

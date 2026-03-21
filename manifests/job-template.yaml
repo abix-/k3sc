@@ -70,6 +70,8 @@ spec:
               mountPath: /cargo-home
             - name: workspaces
               mountPath: /workspaces
+            - name: codex-sessions
+              mountPath: /home/claude/.codex/sessions
             - name: claude-skills
               mountPath: /home/claude/.claude/skills
               readOnly: true
@@ -92,6 +94,10 @@ spec:
         - name: workspaces
           persistentVolumeClaim:
             claimName: workspaces
+        - name: codex-sessions
+          hostPath:
+            path: /mnt/c/Users/Abix/.codex/sessions
+            type: DirectoryOrCreate
         - name: claude-skills
           hostPath:
             path: /mnt/c/Users/Abix/.claude/skills

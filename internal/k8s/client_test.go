@@ -50,6 +50,34 @@ func TestFindRecentUsageLimitPodFromLogsIgnoresOldAndHealthyPods(t *testing.T) {
 	}
 }
 
+func TestFindRecentUsageLimitPodsFromLogsGroupsByFamily(t *testing.T) {
+	now := time.Date(2026, time.March, 17, 12, 0, 0, 0, time.UTC)
+	older := now.Add(-10 * time.Minute)
+	recent := now.Add(-2 * time.Minute)
+
+	pods := []types.AgentPod{
+		{Name: "claude-old", Family: types.FamilyClaude, Phase: types.PhaseFailed, Finished: &older},
+		{Name: "claude-new", Family: types.FamilyClaude, Phase: types.PhaseFailed, Finished: &recent},
+		{Name: "codex-new", Family: types.FamilyCodex, Phase: types.PhaseFailed, Finished: &recent},
+	}
+	logs := map[string]string{
+		"claude-old": UsageLimitMessage,
+		"claude-new": UsageLimitMessage,
+		"codex-new":  UsageLimitMessage,
+	}
+
+	grouped := FindRecentUsageLimitPodsFromLogs(now, 15*time.Minute, pods, logs)
+	if len(grouped) != 2 {
+		t.Fatalf("FindRecentUsageLimitPodsFromLogs() len = %d, want 2", len(grouped))
+	}
+	if got := grouped[types.FamilyClaude].Name; got != "claude-new" {
+		t.Fatalf("claude pod = %q, want %q", got, "claude-new")
+	}
+	if got := grouped[types.FamilyCodex].Name; got != "codex-new" {
+		t.Fatalf("codex pod = %q, want %q", got, "codex-new")
+	}
+}
+
 func TestParseUsageLimitResetTimeSameDay(t *testing.T) {
 	now := time.Date(2026, time.March, 17, 16, 6, 0, 0, time.UTC)
 	resetAt, ok := ParseUsageLimitResetTime(now, "You're out of extra usage -- resets 5pm (UTC)")

@@ -12,8 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"encoding/json"
-
 	"github.com/abix-/k3sc/internal/types"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -56,29 +54,6 @@ func NewClient() (*kubernetes.Clientset, error) {
 	return kubernetes.NewForConfig(config)
 }
 
-// agentJobList is used for JSON deserialization of AgentJob CRs.
-type agentJobList struct {
-	Items []struct {
-		Metadata struct {
-			Name              string `json:"name"`
-			CreationTimestamp string `json:"creationTimestamp"`
-		} `json:"metadata"`
-		Spec struct {
-			Repo        string `json:"repo"`
-			RepoName    string `json:"repoName"`
-			IssueNumber int    `json:"issueNumber"`
-		} `json:"spec"`
-		Status struct {
-			Phase      string `json:"phase"`
-			Agent      string `json:"agent"`
-			Slot       int    `json:"slot"`
-			NextAction string `json:"nextAction"`
-			StartedAt  string `json:"startedAt"`
-			FinishedAt string `json:"finishedAt"`
-		} `json:"status"`
-	} `json:"items"`
-}
-
 var dispatchStateGVR = schema.GroupVersionResource{
 	Group:    "k3sc.abix.dev",
 	Version:  "v1",
@@ -91,51 +66,63 @@ var agentJobGVR = schema.GroupVersionResource{
 	Resource: "agentjobs",
 }
 
+var reviewLeaseGVR = schema.GroupVersionResource{
+	Group:    "k3sc.abix.dev",
+	Version:  "v1",
+	Resource: "reviewleases",
+}
+
 // GetAgentJobs fetches AgentJob CRs and returns TUI-friendly TaskInfo structs.
 func GetAgentJobs(ctx context.Context) ([]types.TaskInfo, error) {
-	config, err := getConfig()
+	cfg, err := getConfig()
 	if err != nil {
 		return nil, err
 	}
-	config.APIPath = "/apis"
-	config.GroupVersion = &schema.GroupVersion{Group: "k3sc.abix.dev", Version: "v1"}
-	config.NegotiatedSerializer = nil
-
-	rc, err := rest.UnversionedRESTClientFor(config)
+	dc, err := dynamic.NewForConfig(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("rest client: %w", err)
+		return nil, fmt.Errorf("dynamic client: %w", err)
 	}
 
-	body, err := rc.Get().
-		AbsPath("/apis/k3sc.abix.dev/v1/namespaces/" + types.Namespace + "/agentjobs").
-		DoRaw(ctx)
+	list, err := dc.Resource(agentJobGVR).Namespace(types.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("get agentjobs: %w", err)
-	}
-
-	var list agentJobList
-	if err := json.Unmarshal(body, &list); err != nil {
-		return nil, fmt.Errorf("unmarshal agentjobs: %w", err)
+		return nil, fmt.Errorf("list agentjobs: %w", err)
 	}
 
 	var result []types.TaskInfo
 	for _, item := range list.Items {
-		t := types.TaskInfo{
-			Name:       item.Metadata.Name,
-			Repo:       types.RepoByName(item.Spec.RepoName),
-			Issue:      item.Spec.IssueNumber,
-			Phase:      item.Status.Phase,
-			Agent:      item.Status.Agent,
-			Slot:       item.Status.Slot,
-			NextAction: item.Status.NextAction,
+		specRepoName, _, _ := unstructured.NestedString(item.Object, "spec", "repoName")
+		specIssue, _, _ := unstructured.NestedInt64(item.Object, "spec", "issueNumber")
+		specAgent, _, _ := unstructured.NestedString(item.Object, "spec", "agent")
+		specSlot, _, _ := unstructured.NestedInt64(item.Object, "spec", "slot")
+		phase, _, _ := unstructured.NestedString(item.Object, "status", "phase")
+		agent, _, _ := unstructured.NestedString(item.Object, "status", "agent")
+		slot, _, _ := unstructured.NestedInt64(item.Object, "status", "slot")
+		nextAction, _, _ := unstructured.NestedString(item.Object, "status", "nextAction")
+		startedAtRaw, _, _ := unstructured.NestedString(item.Object, "status", "startedAt")
+		finishedAtRaw, _, _ := unstructured.NestedString(item.Object, "status", "finishedAt")
+		if agent == "" {
+			agent = specAgent
 		}
-		if item.Status.StartedAt != "" {
-			if ts, err := time.Parse(time.RFC3339, item.Status.StartedAt); err == nil {
+		if slot == 0 {
+			slot = specSlot
+		}
+
+		t := types.TaskInfo{
+			Name:       item.GetName(),
+			Repo:       types.RepoByName(specRepoName),
+			Issue:      int(specIssue),
+			Phase:      phase,
+			Agent:      agent,
+			Slot:       int(slot),
+			NextAction: nextAction,
+		}
+		if startedAtRaw != "" {
+			if ts, err := time.Parse(time.RFC3339, startedAtRaw); err == nil {
 				t.Started = &ts
 			}
 		}
-		if item.Status.FinishedAt != "" {
-			if ts, err := time.Parse(time.RFC3339, item.Status.FinishedAt); err == nil {
+		if finishedAtRaw != "" {
+			if ts, err := time.Parse(time.RFC3339, finishedAtRaw); err == nil {
 				t.Finished = &ts
 			}
 		}
@@ -238,6 +225,20 @@ func HasAgentJobForIssue(ctx context.Context, issue int) (bool, error) {
 	return false, nil
 }
 
+func HasActiveAgentJobForRepoIssue(ctx context.Context, repoName string, issue int) (bool, error) {
+	jobs, err := GetAgentJobs(ctx)
+	if err != nil {
+		return false, err
+	}
+	terminalPhases := map[string]bool{"Succeeded": true, "Failed": true, "Blocked": true}
+	for _, j := range jobs {
+		if j.Repo.Name == repoName && j.Issue == issue && !terminalPhases[j.Phase] {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // DeleteAgentJobsForIssue deletes all terminal AgentJob CRDs for the given repo/issue pair.
 // Returns the number of deleted jobs.
 func DeleteAgentJobsForIssue(ctx context.Context, repoName string, issue int) (int, error) {
@@ -321,6 +322,245 @@ func TriggerDispatch(ctx context.Context) (string, error) {
 	return fmt.Sprintf("scan requested (trigger %d)\n", nonce+1), nil
 }
 
+func GetDispatchState(ctx context.Context) (types.DispatchStateInfo, error) {
+	cfg, err := getConfig()
+	if err != nil {
+		return types.DispatchStateInfo{}, err
+	}
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return types.DispatchStateInfo{}, fmt.Errorf("dynamic client: %w", err)
+	}
+
+	state, err := dc.Resource(dispatchStateGVR).Namespace(types.Namespace).Get(ctx, types.DispatchStateName, metav1.GetOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return types.DispatchStateInfo{}, nil
+		}
+		return types.DispatchStateInfo{}, fmt.Errorf("get dispatch state: %w", err)
+	}
+
+	items, found, err := unstructured.NestedSlice(state.Object, "status", "familyStatuses")
+	if err != nil {
+		return types.DispatchStateInfo{}, err
+	}
+
+	info := types.DispatchStateInfo{}
+	if found {
+		info.FamilyStatuses = make([]types.DispatchFamilyStatus, 0, len(items))
+		for _, item := range items {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			family, _, _ := unstructured.NestedString(entry, "family")
+			available, _, _ := unstructured.NestedBool(entry, "available")
+			checked, _, _ := unstructured.NestedBool(entry, "checked")
+			reason, _, _ := unstructured.NestedString(entry, "reason")
+			info.FamilyStatuses = append(info.FamilyStatuses, types.DispatchFamilyStatus{
+				Family:    types.AgentFamily(family),
+				Available: available,
+				Checked:   checked,
+				Reason:    reason,
+			})
+		}
+	}
+
+	reviewItems, found, err := unstructured.NestedSlice(state.Object, "status", "reviewReservations")
+	if err != nil {
+		return types.DispatchStateInfo{}, err
+	}
+	if found {
+		info.ReviewReservations = make([]types.ReviewReservation, 0, len(reviewItems))
+		for _, item := range reviewItems {
+			entry, ok := item.(map[string]any)
+			if !ok {
+				continue
+			}
+
+			repoName, _, _ := unstructured.NestedString(entry, "repoName")
+			prNumber, _, _ := unstructured.NestedInt64(entry, "prNumber")
+			prURL, _, _ := unstructured.NestedString(entry, "prUrl")
+			branch, _, _ := unstructured.NestedString(entry, "branch")
+			issueNumber, _, _ := unstructured.NestedInt64(entry, "issueNumber")
+			family, _, _ := unstructured.NestedString(entry, "family")
+			workerID, _, _ := unstructured.NestedString(entry, "workerId")
+			workerKind, _, _ := unstructured.NestedString(entry, "workerKind")
+			reservedAt, _ := nestedTime(entry, "reservedAt")
+			expiresAt, _ := nestedTime(entry, "expiresAt")
+
+			info.ReviewReservations = append(info.ReviewReservations, types.ReviewReservation{
+				Repo:       types.RepoByName(repoName),
+				PRNumber:   int(prNumber),
+				PRURL:      prURL,
+				Branch:     branch,
+				Issue:      int(issueNumber),
+				Family:     types.AgentFamily(family),
+				WorkerID:   workerID,
+				WorkerKind: workerKind,
+				ReservedAt: reservedAt,
+				ExpiresAt:  expiresAt,
+			})
+		}
+	}
+
+	return info, nil
+}
+
+func nestedTime(entry map[string]any, key string) (*time.Time, bool) {
+	raw, found, err := unstructured.NestedString(entry, key)
+	if err != nil || !found || raw == "" {
+		return nil, false
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return nil, false
+	}
+	return &parsed, true
+}
+
+func GetReviewLeases(ctx context.Context) ([]types.ReviewReservation, error) {
+	cfg, err := getConfig()
+	if err != nil {
+		return nil, err
+	}
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("dynamic client: %w", err)
+	}
+
+	list, err := dc.Resource(reviewLeaseGVR).Namespace(types.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list review leases: %w", err)
+	}
+
+	var result []types.ReviewReservation
+	for _, item := range list.Items {
+		spec := item.Object["spec"]
+		specMap, ok := spec.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		repoName, _, _ := unstructured.NestedString(specMap, "repoName")
+		prNumber, _, _ := unstructured.NestedInt64(specMap, "prNumber")
+		prURL, _, _ := unstructured.NestedString(specMap, "prUrl")
+		branch, _, _ := unstructured.NestedString(specMap, "branch")
+		issueNumber, _, _ := unstructured.NestedInt64(specMap, "issueNumber")
+		family, _, _ := unstructured.NestedString(specMap, "family")
+		workerID, _, _ := unstructured.NestedString(specMap, "workerId")
+		workerKind, _, _ := unstructured.NestedString(specMap, "workerKind")
+		reservedAt, _ := nestedTime(specMap, "reservedAt")
+		expiresAt, _ := nestedTime(specMap, "expiresAt")
+
+		result = append(result, types.ReviewReservation{
+			Name:       item.GetName(),
+			Repo:       types.RepoByName(repoName),
+			PRNumber:   int(prNumber),
+			PRURL:      prURL,
+			Branch:     branch,
+			Issue:      int(issueNumber),
+			Family:     types.AgentFamily(family),
+			WorkerID:   workerID,
+			WorkerKind: workerKind,
+			ReservedAt: reservedAt,
+			ExpiresAt:  expiresAt,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		ti, tj := result[i].ReservedAt, result[j].ReservedAt
+		if ti == nil && tj == nil {
+			return result[i].PRNumber < result[j].PRNumber
+		}
+		if ti == nil {
+			return false
+		}
+		if tj == nil {
+			return true
+		}
+		return ti.Before(*tj)
+	})
+	return result, nil
+}
+
+func CreateReviewLease(ctx context.Context, lease types.ReviewReservation) error {
+	cfg, err := getConfig()
+	if err != nil {
+		return err
+	}
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("dynamic client: %w", err)
+	}
+
+	spec := map[string]any{
+		"repo":       lease.Repo.Owner + "/" + lease.Repo.Name,
+		"repoName":   lease.Repo.Name,
+		"prNumber":   int64(lease.PRNumber),
+		"prUrl":      lease.PRURL,
+		"branch":     lease.Branch,
+		"family":     string(lease.Family),
+		"workerId":   lease.WorkerID,
+		"workerKind": lease.WorkerKind,
+	}
+	if lease.Issue > 0 {
+		spec["issueNumber"] = int64(lease.Issue)
+	}
+	if lease.ReservedAt != nil {
+		spec["reservedAt"] = lease.ReservedAt.UTC().Format(time.RFC3339)
+	}
+	if lease.ExpiresAt != nil {
+		spec["expiresAt"] = lease.ExpiresAt.UTC().Format(time.RFC3339)
+	}
+
+	obj := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "k3sc.abix.dev/v1",
+			"kind":       "ReviewLease",
+			"metadata": map[string]any{
+				"name":      types.ReviewLeaseName(lease.Repo, lease.PRNumber),
+				"namespace": types.Namespace,
+			},
+			"spec": spec,
+			"status": map[string]any{
+				"phase": "Reserved",
+			},
+		},
+	}
+
+	_, err = dc.Resource(reviewLeaseGVR).Namespace(types.Namespace).Create(ctx, obj, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("create review lease: %w", err)
+	}
+	return nil
+}
+
+func DeleteReviewLease(ctx context.Context, repo types.Repo, prNumber int) (bool, error) {
+	cfg, err := getConfig()
+	if err != nil {
+		return false, err
+	}
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return false, fmt.Errorf("dynamic client: %w", err)
+	}
+
+	name := types.ReviewLeaseName(repo, prNumber)
+	err = dc.Resource(reviewLeaseGVR).Namespace(types.Namespace).Delete(ctx, name, metav1.DeleteOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("delete review lease: %w", err)
+	}
+	return true, nil
+}
+
 func GetActiveSlots(ctx context.Context, cs *kubernetes.Clientset) ([]int, error) {
 	jobs, err := cs.BatchV1().Jobs(types.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app=claude-agent",
@@ -395,14 +635,10 @@ func ParseUsageLimitResetTime(now time.Time, log string) (time.Time, bool) {
 }
 
 func FindRecentUsageLimitPodFromLogs(now time.Time, lookback time.Duration, pods []types.AgentPod, logs map[string]string) *types.AgentPod {
+	grouped := FindRecentUsageLimitPodsFromLogs(now, lookback, pods, logs)
 	var matches []types.AgentPod
-	for _, pod := range pods {
-		if !podFailedWithinLookback(pod, now, lookback) {
-			continue
-		}
-		if strings.Contains(logs[pod.Name], UsageLimitMessage) {
-			matches = append(matches, pod)
-		}
+	for _, pod := range grouped {
+		matches = append(matches, pod)
 	}
 	if len(matches) == 0 {
 		return nil
@@ -415,10 +651,54 @@ func FindRecentUsageLimitPodFromLogs(now time.Time, lookback time.Duration, pods
 	return &pod
 }
 
+func FindRecentUsageLimitPodsFromLogs(now time.Time, lookback time.Duration, pods []types.AgentPod, logs map[string]string) map[types.AgentFamily]types.AgentPod {
+	matches := map[types.AgentFamily]types.AgentPod{}
+	for _, pod := range pods {
+		if !podFailedWithinLookback(pod, now, lookback) {
+			continue
+		}
+		if !strings.Contains(logs[pod.Name], UsageLimitMessage) {
+			continue
+		}
+
+		family := pod.Family
+		if family == "" {
+			family = types.FamilyClaude
+		}
+
+		current, ok := matches[family]
+		if !ok || podEventTime(pod).After(podEventTime(current)) {
+			matches[family] = pod
+		}
+	}
+	return matches
+}
+
 func FindRecentUsageLimitPod(ctx context.Context, cs *kubernetes.Clientset, lookback time.Duration) (*types.AgentPod, string, error) {
-	pods, err := GetAgentPods(ctx, cs)
+	grouped, logs, err := FindRecentUsageLimitPods(ctx, cs, lookback)
 	if err != nil {
 		return nil, "", err
+	}
+
+	var matches []types.AgentPod
+	for _, pod := range grouped {
+		matches = append(matches, pod)
+	}
+	if len(matches) == 0 {
+		return nil, "", nil
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		return podEventTime(matches[i]).After(podEventTime(matches[j]))
+	})
+	pod := matches[0]
+	return &pod, logs[pod.Name], nil
+}
+
+func FindRecentUsageLimitPods(ctx context.Context, cs *kubernetes.Clientset, lookback time.Duration) (map[types.AgentFamily]types.AgentPod, map[string]string, error) {
+	pods, err := GetAgentPods(ctx, cs)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	now := time.Now()
@@ -429,16 +709,12 @@ func FindRecentUsageLimitPod(ctx context.Context, cs *kubernetes.Clientset, look
 		}
 		lines, err := GetPodLogLines(ctx, cs, pod.Name, 40)
 		if err != nil {
-			return nil, "", err
+			return nil, nil, err
 		}
 		logs[pod.Name] = strings.Join(lines, "\n")
 	}
 
-	pod := FindRecentUsageLimitPodFromLogs(now, lookback, pods, logs)
-	if pod == nil {
-		return nil, "", nil
-	}
-	return pod, logs[pod.Name], nil
+	return FindRecentUsageLimitPodsFromLogs(now, lookback, pods, logs), logs, nil
 }
 
 func GetPodLogTail(ctx context.Context, cs *kubernetes.Clientset, podName string, lines int64) (string, error) {

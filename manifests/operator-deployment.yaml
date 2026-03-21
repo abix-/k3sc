@@ -28,7 +28,14 @@ spec:
           volumeMounts:
             - name: dispatcher-scripts
               mountPath: /etc/dispatcher
+            - name: codex-sessions
+              mountPath: /home/claude/.codex/sessions
+              readOnly: true
       volumes:
         - name: dispatcher-scripts
           configMap:
             name: dispatcher-scripts
+        - name: codex-sessions
+          hostPath:
+            path: /mnt/c/Users/Abix/.codex/sessions
+            type: DirectoryOrCreate

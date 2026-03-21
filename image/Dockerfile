@@ -14,7 +14,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     rm -rf /var/lib/apt/lists/*
 
 # claude code CLI + codex CLI
-RUN npm install -g @anthropic-ai/claude-code @openai/codex
+RUN npm install -g @anthropic-ai/claude-code@2.1.80 @openai/codex@0.116.0
 
 # github CLI
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -52,8 +52,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends sudo && \
     rm -rf /var/lib/apt/lists/* && \
     useradd -m -s /bin/bash claude && \
     echo "claude ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claude && \
-    mkdir -p /workspaces /cargo-target /cargo-home && \
-    chown -R claude:claude /workspaces /cargo-target /cargo-home
+    mkdir -p /workspaces /cargo-target /cargo-home /home/claude/.codex/sessions && \
+    chown -R claude:claude /workspaces /cargo-target /cargo-home /home/claude/.codex
 COPY --chown=claude:claude claude-config/ /home/claude/.claude/
 
 USER claude
