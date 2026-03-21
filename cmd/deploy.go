@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -62,86 +61,8 @@ func ensureSecret() error {
 		}
 	}
 
-	home := os.Getenv("USERPROFILE")
-	if home == "" {
-		home = os.Getenv("HOME")
-	}
-
-	// read GitHub token from ~/.gh-token
-	ghTokenBytes, err := os.ReadFile(filepath.Join(home, ".gh-token"))
-	if err != nil {
-		return fmt.Errorf("read ~/.gh-token: %w", err)
-	}
-	ghToken := strings.TrimSpace(string(ghTokenBytes))
-	if ghToken == "" {
-		return fmt.Errorf("~/.gh-token is empty")
-	}
-
-	// read Claude OAuth token from ~/.claude/.credentials.json
-	credsPath := filepath.Join(home, ".claude", ".credentials.json")
-	credsBytes, err := os.ReadFile(credsPath)
-	if err != nil {
-		return fmt.Errorf("read ~/.claude/.credentials.json: %w", err)
-	}
-	var creds struct {
-		ClaudeAiOauth struct {
-			AccessToken string `json:"accessToken"`
-		} `json:"claudeAiOauth"`
-	}
-	if err := json.Unmarshal(credsBytes, &creds); err != nil || creds.ClaudeAiOauth.AccessToken == "" {
-		return fmt.Errorf("parse Claude OAuth token from %s", credsPath)
-	}
-
-	openAIAPIKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
-	codexAuthPath := filepath.Join(home, ".codex", "auth.json")
-	codexAuthBytes, codexErr := os.ReadFile(codexAuthPath)
-	codexAuthJSON := strings.TrimSpace(string(codexAuthBytes))
-	if codexErr == nil {
-		var codexAuth struct {
-			OpenAIAPIKey *string `json:"OPENAI_API_KEY"`
-		}
-		if err := json.Unmarshal(codexAuthBytes, &codexAuth); err == nil && codexAuth.OpenAIAPIKey != nil {
-			if key := strings.TrimSpace(*codexAuth.OpenAIAPIKey); openAIAPIKey == "" && key != "" {
-				openAIAPIKey = key
-			}
-		}
-	}
-	if openAIAPIKey == "" && codexAuthJSON == "" {
-		return fmt.Errorf("no Codex auth found: set OPENAI_API_KEY or run 'codex login'")
-	}
-
-	stringData := map[string]string{
-		"GITHUB_TOKEN":            ghToken,
-		"CLAUDE_CODE_OAUTH_TOKEN": creds.ClaudeAiOauth.AccessToken,
-	}
-	if openAIAPIKey != "" {
-		stringData["OPENAI_API_KEY"] = openAIAPIKey
-	}
-	if codexAuthJSON != "" {
-		stringData["CODEX_AUTH_JSON"] = codexAuthJSON
-	}
-
-	manifest, err := json.Marshal(map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Secret",
-		"metadata": map[string]any{
-			"name":      "claude-secrets",
-			"namespace": "claude-agents",
-		},
-		"type":       "Opaque",
-		"stringData": stringData,
-	})
-	if err != nil {
-		return fmt.Errorf("marshal secret manifest: %w", err)
-	}
-
-	// Apply via stdin so secrets never appear in shell or process args.
 	fmt.Println("=== applying secret from local GitHub, Claude, and Codex auth ===")
-	cr := exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "sudo", "k3s", "kubectl", "apply", "-f", "-")
-	cr.Stdin = bytes.NewReader(manifest)
-	cr.Stdout = os.Stdout
-	cr.Stderr = os.Stderr
-	return cr.Run()
+	return runRotateAuth(nil, nil)
 }
 
 func findRepoRoot() (string, error) {
