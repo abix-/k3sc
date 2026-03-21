@@ -97,17 +97,14 @@ func runFamilyQuotaProbes(ctx context.Context) familyProbeResults {
 func buildFamilyDispatchStates(now time.Time, lookback time.Duration, recentChecked bool, probes familyProbeResults, recent map[coretypes.AgentFamily]recentUsageLimit) (map[coretypes.AgentFamily]familyDispatchState, []string) {
 	states := map[coretypes.AgentFamily]familyDispatchState{
 		coretypes.FamilyClaude: fallbackDispatchState(now, lookback, recentChecked, recent[coretypes.FamilyClaude]),
-		coretypes.FamilyCodex:  {Available: true},
+		coretypes.FamilyCodex:  fallbackDispatchState(now, lookback, recentChecked, recent[coretypes.FamilyCodex]),
 	}
 
 	var warnings []string
 
 	if probes.CodexErr != nil {
 		warnings = append(warnings, fmt.Sprintf("codex quota probe error: %v", probes.CodexErr))
-		states[coretypes.FamilyCodex] = familyDispatchState{
-			Available: true,
-			Reason:    fmt.Sprintf("shared session data unavailable: %v", probes.CodexErr),
-		}
+		// Don't override -- fallback state from initial build already accounts for recent failures
 	} else if probes.Codex != nil {
 		state := familyDispatchState{
 			Available: true,

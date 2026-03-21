@@ -133,14 +133,33 @@ func TestBuildFamilyDispatchStatesExposesSessionReadFailure(t *testing.T) {
 	}
 	state := states[coretypes.FamilyCodex]
 	if !state.Available {
-		t.Fatal("codex should remain dispatchable when only session visibility fails")
+		t.Fatal("codex should remain dispatchable when probe fails and no recent limit")
 	}
-	if state.Checked {
-		t.Fatal("codex should remain unchecked when shared session data is unavailable")
+	// codex now uses fallback, which marks checked when recentChecked is true
+	if !state.Checked {
+		t.Fatal("codex should be checked via fallback when recentChecked is true")
 	}
-	want := "shared session data unavailable: no shared codex session data yet"
-	if state.Reason != want {
-		t.Fatalf("reason = %q, want %q", state.Reason, want)
+}
+
+func TestBuildFamilyDispatchStatesCodexBlockedByRecentLimit(t *testing.T) {
+	now := time.Date(2026, time.March, 20, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(5 * 24 * time.Hour) // resets in 5 days
+
+	states, warnings := buildFamilyDispatchStates(now, 15*time.Minute, true, familyProbeResults{
+		CodexErr: staticErr("no shared codex session data yet"),
+	}, map[coretypes.AgentFamily]recentUsageLimit{
+		coretypes.FamilyCodex: {
+			PodName: "codex-issue-208",
+			ResetAt: &reset,
+		},
+	})
+
+	if len(warnings) != 1 {
+		t.Fatalf("warnings len = %d, want 1", len(warnings))
+	}
+	state := states[coretypes.FamilyCodex]
+	if state.Available {
+		t.Fatal("codex should be blocked when probe fails and recent pod hit usage limit")
 	}
 }
 
