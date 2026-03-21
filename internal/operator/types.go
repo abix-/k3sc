@@ -91,7 +91,8 @@ type DispatchState struct {
 }
 
 type DispatchStateSpec struct {
-	TriggerNonce int64 `json:"triggerNonce,omitempty"`
+	TriggerNonce     int64    `json:"triggerNonce,omitempty"`
+	DisabledFamilies []string `json:"disabledFamilies,omitempty"`
 }
 
 type DispatchFamilyStatus struct {
@@ -195,6 +196,9 @@ func (in *DispatchState) DeepCopyObject() runtime.Object {
 	out := new(DispatchState)
 	*out = *in
 	out.ObjectMeta = *in.ObjectMeta.DeepCopy()
+	if in.Spec.DisabledFamilies != nil {
+		out.Spec.DisabledFamilies = append([]string(nil), in.Spec.DisabledFamilies...)
+	}
 	if in.Status.LastScanTime != nil {
 		t := *in.Status.LastScanTime
 		out.Status.LastScanTime = &t

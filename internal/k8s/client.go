@@ -346,6 +346,13 @@ func GetDispatchState(ctx context.Context) (types.DispatchStateInfo, error) {
 	}
 
 	info := types.DispatchStateInfo{}
+
+	// read disabled families from spec
+	disabledRaw, _, _ := unstructured.NestedStringSlice(state.Object, "spec", "disabledFamilies")
+	for _, f := range disabledRaw {
+		info.DisabledFamilies = append(info.DisabledFamilies, types.AgentFamily(f))
+	}
+
 	if found {
 		info.FamilyStatuses = make([]types.DispatchFamilyStatus, 0, len(items))
 		for _, item := range items {
@@ -406,6 +413,40 @@ func GetDispatchState(ctx context.Context) (types.DispatchStateInfo, error) {
 	}
 
 	return info, nil
+}
+
+func SetDisabledFamilies(ctx context.Context, families []string) error {
+	cfg, err := getConfig()
+	if err != nil {
+		return err
+	}
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("dynamic client: %w", err)
+	}
+
+	resource := dc.Resource(dispatchStateGVR).Namespace(types.Namespace)
+	state, err := resource.Get(ctx, types.DispatchStateName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get dispatch state: %w", err)
+	}
+
+	if len(families) == 0 {
+		unstructured.RemoveNestedField(state.Object, "spec", "disabledFamilies")
+	} else {
+		vals := make([]any, len(families))
+		for i, f := range families {
+			vals[i] = f
+		}
+		if err := unstructured.SetNestedSlice(state.Object, vals, "spec", "disabledFamilies"); err != nil {
+			return fmt.Errorf("set disabled families: %w", err)
+		}
+	}
+
+	if _, err := resource.Update(ctx, state, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update dispatch state: %w", err)
+	}
+	return nil
 }
 
 func nestedTime(entry map[string]any, key string) (*time.Time, bool) {

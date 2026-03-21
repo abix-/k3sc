@@ -219,6 +219,53 @@ func TestCreateAndRequeueTaskLifecycle(t *testing.T) {
 	}
 }
 
+func TestDisabledFamiliesOverrideAvailability(t *testing.T) {
+	states := map[coretypes.AgentFamily]familyDispatchState{
+		coretypes.FamilyClaude: {Available: true, Reason: "ok"},
+		coretypes.FamilyCodex:  {Available: true, Reason: "ok"},
+	}
+
+	disabled := []string{"codex"}
+	for _, d := range disabled {
+		family := coretypes.AgentFamily(d)
+		if state, ok := states[family]; ok {
+			state.Available = false
+			state.Reason = "disabled via k3sc disable"
+			states[family] = state
+		}
+	}
+
+	if states[coretypes.FamilyCodex].Available {
+		t.Fatal("codex should be blocked after disable")
+	}
+	if states[coretypes.FamilyCodex].Reason != "disabled via k3sc disable" {
+		t.Fatalf("codex reason = %q, want 'disabled via k3sc disable'", states[coretypes.FamilyCodex].Reason)
+	}
+	if !states[coretypes.FamilyClaude].Available {
+		t.Fatal("claude should remain available")
+	}
+}
+
+func TestDeepCopyDispatchStatePreservesDisabledFamilies(t *testing.T) {
+	state := &DispatchState{
+		Spec: DispatchStateSpec{
+			TriggerNonce:     5,
+			DisabledFamilies: []string{"codex"},
+		},
+	}
+	copied := state.DeepCopyObject().(*DispatchState)
+
+	if len(copied.Spec.DisabledFamilies) != 1 || copied.Spec.DisabledFamilies[0] != "codex" {
+		t.Fatalf("copied DisabledFamilies = %v, want [codex]", copied.Spec.DisabledFamilies)
+	}
+
+	// mutating copy should not affect original
+	copied.Spec.DisabledFamilies[0] = "claude"
+	if state.Spec.DisabledFamilies[0] != "codex" {
+		t.Fatal("mutating copy should not affect original")
+	}
+}
+
 func newOperatorTestScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()

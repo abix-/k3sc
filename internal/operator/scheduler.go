@@ -137,7 +137,7 @@ func (r *DispatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	logger := log.FromContext(ctx).WithName("scheduler")
-	scan, err := r.scan(ctx)
+	scan, err := r.scan(ctx, state.Spec.DisabledFamilies)
 	if err != nil {
 		logger.Error(err, "scan failed")
 	}
@@ -252,7 +252,7 @@ func nextDispatchInterval(minInterval, maxInterval time.Duration, idleScans int)
 	return interval
 }
 
-func (r *DispatchReconciler) scan(ctx context.Context) (scanResult, error) {
+func (r *DispatchReconciler) scan(ctx context.Context, disabledFamilies []string) (scanResult, error) {
 	tasks, groups, err := r.loadTaskState(ctx)
 	if err != nil {
 		return scanResult{}, err
@@ -266,6 +266,17 @@ func (r *DispatchReconciler) scan(ctx context.Context) (scanResult, error) {
 	}
 
 	familyStates, warnings := probeFamilyDispatchStates(ctx, r.K8s, usageLimitLookback)
+
+	// apply manual family disables from DispatchState spec
+	for _, disabled := range disabledFamilies {
+		family := coretypes.AgentFamily(disabled)
+		if state, ok := familyStates[family]; ok {
+			state.Available = false
+			state.Reason = "disabled via k3sc disable"
+			familyStates[family] = state
+		}
+	}
+
 	result := scanResult{
 		familyStatuses:     dispatchFamilyStatuses(familyStates),
 		reviewReservations: reviewReservations,

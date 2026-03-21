@@ -138,6 +138,7 @@ type DispatchFamilyStatus struct {
 
 type DispatchStateInfo struct {
 	FamilyStatuses     []DispatchFamilyStatus
+	DisabledFamilies   []AgentFamily
 	ReviewReservations []ReviewReservation
 }
 
