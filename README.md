@@ -33,6 +33,8 @@ Windows-side PR review can also be reserved on demand. `k3sc take --worker claud
 |---------|-------------|
 | `k3sc top` | Live TUI dashboard -- agents, issues, PRs, operator logs |
 | `k3sc top --once` | One-shot text output |
+| `k3sc sessions` | Live TUI dashboard of running Claude Code sessions, `ccusage` totals, and the active 5-hour block |
+| `k3sc sessions --once` | One-shot local Claude session snapshot with active block details |
 | `k3sc dispatch` | Scan GitHub, create jobs for eligible issues |
 | `k3sc logs [repo] [issue]` | View agent pod logs (summary or repo-scoped per-issue) |
 | `k3sc logs -f [repo] [issue]` | Follow logs live |
@@ -52,6 +54,10 @@ Windows-side PR review can also be reserved on demand. `k3sc take --worker claud
 The `top` command provides a live dashboard with sections for cluster status, quota, local PR reservations, operator output, GitHub issues, agent pods with live log tails, and open PRs. Hotkeys:
 
 `q` quit | `n` dispatch now | `p` pause | `d` toggle dispatcher | `l` toggle live logs | `r` refresh | `+`/`-` adjust max agents
+
+The `sessions` command provides a local live dashboard of running `claude.exe` processes, Claude session IDs from `~/.claude/sessions/<pid>.json`, per-session token/cost totals from `ccusage`, and the active Claude billing block with Max-style token-limit projections. Hotkeys:
+
+`q` quit | `r` refresh | `1-9` copy session ID
 
 ## Architecture
 
