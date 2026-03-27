@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,7 +33,17 @@ type Snapshot struct {
 	OutputTokens        int64         `json:"outputTokens"`
 	ActiveBlock         *BlockInfo    `json:"activeBlock,omitempty"`
 	BlockError          string        `json:"blockError,omitempty"`
+	Timings             TimingInfo    `json:"timings"`
 	Sessions            []SessionInfo `json:"sessions"`
+}
+
+type TimingInfo struct {
+	TotalMS            float64 `json:"totalMs"`
+	ProcessScanMS      float64 `json:"processScanMs"`
+	MetadataReadMS     float64 `json:"metadataReadMs"`
+	SessionUsageWallMS float64 `json:"sessionUsageWallMs"`
+	SessionUsageSumMS  float64 `json:"sessionUsageSumMs"`
+	ActiveBlockMS      float64 `json:"activeBlockMs"`
 }
 
 type BlockInfo struct {
@@ -87,6 +98,7 @@ type SessionInfo struct {
 	CacheReadTokens     int64      `json:"cacheReadTokens"`
 	CachedTokens        int64      `json:"cachedTokens"`
 	OutputTokens        int64      `json:"outputTokens"`
+	UsageDurationMS     float64    `json:"usageDurationMs,omitempty"`
 }
 
 type processList struct {
@@ -179,6 +191,7 @@ type usageSummary struct {
 }
 
 func CollectSessions() (*Snapshot, error) {
+	totalStart := time.Now()
 	if runtime.GOOS != "windows" {
 		return nil, errors.New("k3sc sessions is only supported on Windows")
 	}
@@ -186,7 +199,9 @@ func CollectSessions() (*Snapshot, error) {
 		return nil, fmt.Errorf("ccusage not found in PATH: %w", err)
 	}
 
+	processScanStart := time.Now()
 	processes, err := listClaudeProcesses()
+	processScanDuration := time.Since(processScanStart)
 	if err != nil {
 		return nil, err
 	}
@@ -204,17 +219,17 @@ func CollectSessions() (*Snapshot, error) {
 		GeneratedAt: time.Now(),
 		Sessions:    make([]SessionInfo, 0, len(processes)),
 	}
+	snapshot.Timings.ProcessScanMS = durationMS(processScanDuration)
 
 	var (
 		blockWG sync.WaitGroup
-		blockMu sync.Mutex
 	)
 	blockWG.Add(1)
 	go func() {
 		defer blockWG.Done()
+		blockStart := time.Now()
 		block, err := loadActiveBlock()
-		blockMu.Lock()
-		defer blockMu.Unlock()
+		snapshot.Timings.ActiveBlockMS = durationMS(time.Since(blockStart))
 		if err != nil {
 			snapshot.BlockError = err.Error()
 			return
@@ -222,6 +237,7 @@ func CollectSessions() (*Snapshot, error) {
 		snapshot.ActiveBlock = block
 	}()
 
+	metadataStart := time.Now()
 	for _, proc := range processes {
 		session := SessionInfo{
 			PID:         proc.ProcessID,
@@ -259,12 +275,16 @@ func CollectSessions() (*Snapshot, error) {
 
 		snapshot.Sessions = append(snapshot.Sessions, session)
 	}
+	snapshot.Timings.MetadataReadMS = durationMS(time.Since(metadataStart))
 
-	loadSessionUsage(snapshot.Sessions)
+	sessionUsageWall, sessionUsageSum := loadSessionUsage(snapshot.Sessions)
+	snapshot.Timings.SessionUsageWallMS = durationMS(sessionUsageWall)
+	snapshot.Timings.SessionUsageSumMS = durationMS(sessionUsageSum)
 	blockWG.Wait()
 
 	sortSessions(snapshot.Sessions)
 	summarizeSnapshot(snapshot)
+	snapshot.Timings.TotalMS = durationMS(time.Since(totalStart))
 	return snapshot, nil
 }
 
@@ -295,21 +315,34 @@ func readSessionMetadata(path string) (*sessionMetadata, error) {
 	return &meta, nil
 }
 
-func loadUsageSummary(sessionID string) (*usageSummary, error) {
+func loadUsageReport(sessionID string) (*ccusageReport, error) {
 	cmd := exec.Command("ccusage", "session", "--json", "-i", sessionID, "--offline")
 	out, stderr, err := runCommandJSON(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("ccusage %s: %s", sessionID, formatCommandError(err, stderr))
 	}
 
-	summary, err := parseCCUsageSummary(out)
+	var report ccusageReport
+	if err := json.Unmarshal(trimBOM(out), &report); err != nil {
+		return nil, err
+	}
+	return &report, nil
+}
+
+func loadUsageSummary(sessionID string) (*usageSummary, error) {
+	report, err := loadUsageReport(sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	summary, err := summarizeCCUsageReport(report)
 	if err != nil {
 		return nil, fmt.Errorf("parse ccusage %s: %w", sessionID, err)
 	}
 	return summary, nil
 }
 
-func loadActiveBlock() (*BlockInfo, error) {
+func loadActiveBlockViaCCUsage() (*BlockInfo, error) {
 	cmd := exec.Command("ccusage", "blocks", "--active", "--offline", "--json", "--token-limit", "max")
 	out, stderr, err := runCommandJSON(cmd)
 	if err != nil {
@@ -371,6 +404,13 @@ func parseCCUsageSummary(raw []byte) (*usageSummary, error) {
 	if err := json.Unmarshal(trimBOM(raw), &report); err != nil {
 		return nil, err
 	}
+	return summarizeCCUsageReport(&report)
+}
+
+func summarizeCCUsageReport(report *ccusageReport) (*usageSummary, error) {
+	if report == nil {
+		return nil, errors.New("nil ccusage report")
+	}
 
 	modelSet := make(map[string]struct{})
 	summary := &usageSummary{
@@ -411,8 +451,11 @@ func parseCCUsageSummary(raw []byte) (*usageSummary, error) {
 	return summary, nil
 }
 
-func loadSessionUsage(sessions []SessionInfo) {
+func loadSessionUsage(sessions []SessionInfo) (time.Duration, time.Duration) {
+	start := time.Now()
 	var wg sync.WaitGroup
+	var sumMu sync.Mutex
+	var total time.Duration
 	for idx := range sessions {
 		if sessions[idx].SessionID == "" {
 			continue
@@ -420,7 +463,13 @@ func loadSessionUsage(sessions []SessionInfo) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
+			sessionStart := time.Now()
 			usage, err := loadUsageSummary(sessions[i].SessionID)
+			duration := time.Since(sessionStart)
+			sessions[i].UsageDurationMS = durationMS(duration)
+			sumMu.Lock()
+			total += duration
+			sumMu.Unlock()
 			if err != nil {
 				sessions[i].UsageError = err.Error()
 				return
@@ -440,6 +489,7 @@ func loadSessionUsage(sessions []SessionInfo) {
 		}(idx)
 	}
 	wg.Wait()
+	return time.Since(start), total
 }
 
 func summarizeSnapshot(snapshot *Snapshot) {
@@ -530,4 +580,8 @@ func maxInt64(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+func durationMS(d time.Duration) float64 {
+	return math.Round(d.Seconds()*1000*10) / 10
 }

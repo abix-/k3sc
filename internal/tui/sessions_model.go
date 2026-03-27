@@ -235,7 +235,7 @@ func (m SessionsModel) renderBlockPanel(st sessionStyles, s *claude.Snapshot, ou
 			statusStyle := st.badgeOK
 			if strings.EqualFold(block.TokenLimitStatus, "warning") {
 				statusStyle = st.badgeWarn
-			} else if strings.EqualFold(block.TokenLimitStatus, "exceeded") || strings.EqualFold(block.TokenLimitStatus, "error") {
+			} else if strings.EqualFold(block.TokenLimitStatus, "exceeded") || strings.EqualFold(block.TokenLimitStatus, "exceeds") || strings.EqualFold(block.TokenLimitStatus, "error") {
 				statusStyle = st.badgeErr
 			}
 			lines = append(lines, "")

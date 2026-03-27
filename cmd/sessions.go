@@ -14,13 +14,15 @@ import (
 )
 
 var (
-	sessionsOnce bool
-	sessionsJSON bool
+	sessionsOnce    bool
+	sessionsJSON    bool
+	sessionsTimings bool
 )
 
 func init() {
 	sessionsCmd.Flags().BoolVar(&sessionsOnce, "once", false, "Print once and exit (no TUI)")
 	sessionsCmd.Flags().BoolVar(&sessionsJSON, "json", false, "Print JSON and exit")
+	sessionsCmd.Flags().BoolVar(&sessionsTimings, "timings", false, "Show collector timing breakdown")
 	rootCmd.AddCommand(sessionsCmd)
 }
 
@@ -129,6 +131,9 @@ func printSessions(snapshot *claude.Snapshot) {
 		if len(session.Models) > 0 {
 			fmt.Printf("    Models  : %s\n", strings.Join(session.Models, ", "))
 		}
+		if sessionsTimings && session.UsageDurationMS > 0 {
+			fmt.Printf("    Timing  : usage %.1f ms\n", session.UsageDurationMS)
+		}
 		if session.Name != "" {
 			fmt.Printf("    Name    : %s\n", session.Name)
 		}
@@ -139,6 +144,15 @@ func printSessions(snapshot *claude.Snapshot) {
 			fmt.Printf("    Usage   : %s\n", session.UsageError)
 		}
 		fmt.Println()
+	}
+
+	if sessionsTimings {
+		fmt.Println("=== TIMINGS ===")
+		fmt.Printf("Total           : %.1f ms\n", snapshot.Timings.TotalMS)
+		fmt.Printf("Process scan    : %.1f ms\n", snapshot.Timings.ProcessScanMS)
+		fmt.Printf("Metadata read   : %.1f ms\n", snapshot.Timings.MetadataReadMS)
+		fmt.Printf("Session usage   : %.1f ms wall | %.1f ms summed\n", snapshot.Timings.SessionUsageWallMS, snapshot.Timings.SessionUsageSumMS)
+		fmt.Printf("Active block    : %.1f ms\n", snapshot.Timings.ActiveBlockMS)
 	}
 }
 

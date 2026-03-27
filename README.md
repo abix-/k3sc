@@ -35,6 +35,7 @@ Windows-side PR review can also be reserved on demand. `k3sc take --worker claud
 | `k3sc top --once` | One-shot text output |
 | `k3sc sessions` | Live TUI dashboard of running Claude Code sessions, `ccusage` totals, and the active 5-hour block |
 | `k3sc sessions --once` | One-shot local Claude session snapshot with active block details |
+| `k3sc sessions --once --timings` | Benchmark breakdown for process scan, metadata, per-session usage, and active block collection |
 | `k3sc dispatch` | Scan GitHub, create jobs for eligible issues |
 | `k3sc logs [repo] [issue]` | View agent pod logs (summary or repo-scoped per-issue) |
 | `k3sc logs -f [repo] [issue]` | Follow logs live |
