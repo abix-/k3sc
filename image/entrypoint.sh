@@ -73,14 +73,14 @@ if [ -n "${CODEX_AUTH_JSON:-}" ]; then
 fi
 
 # GITHUB_TOKEN env var is auto-detected by gh CLI -- no explicit login needed
-if [ -z "${GITHUB_TOKEN:-}" ]; then
-    echo "[entrypoint] ERROR: GITHUB_TOKEN env var is required"
-    exit 1
+if [ "$JOB_KIND" != "timberbot" ]; then
+    if [ -z "${GITHUB_TOKEN:-}" ]; then
+        echo "[entrypoint] ERROR: GITHUB_TOKEN env var is required"
+        exit 1
+    fi
+    echo "[entrypoint] verifying gh auth..."
+    gh auth status 2>&1 || true
 fi
-
-# verify auth works
-echo "[entrypoint] verifying gh auth..."
-gh auth status 2>&1 || true
 
 AGENT_FAMILY="${AGENT_FAMILY:-claude}"
 echo "[entrypoint] agent family: ${AGENT_FAMILY}"
