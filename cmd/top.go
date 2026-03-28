@@ -81,7 +81,6 @@ type dashboard struct {
 	issues      []types.Issue
 	prs         []types.PullRequest
 	operatorLog string
-	timberbot   types.TimberbotInfo
 }
 
 func gather(cs *kubernetes.Clientset) (*dashboard, error) {
@@ -95,13 +94,12 @@ func gather(cs *kubernetes.Clientset) (*dashboard, error) {
 		issues                []types.Issue
 		prs                   []types.PullRequest
 		dispLog               string
-		timberbot             types.TimberbotInfo
 		mu                    sync.Mutex
 		wg                    sync.WaitGroup
 		errs                  []error
 	)
 
-	wg.Add(8)
+	wg.Add(7)
 	go func() {
 		defer wg.Done()
 		n, v, e := k8s.GetNodeInfo(ctx, cs)
@@ -172,16 +170,6 @@ func gather(cs *kubernetes.Clientset) (*dashboard, error) {
 		}
 		mu.Unlock()
 	}()
-	go func() {
-		defer wg.Done()
-		t, e := k8s.GetTimberbotSpec(ctx)
-		mu.Lock()
-		timberbot = t
-		if e != nil {
-			errs = append(errs, e)
-		}
-		mu.Unlock()
-	}()
 	wg.Wait()
 
 	return &dashboard{
@@ -193,7 +181,6 @@ func gather(cs *kubernetes.Clientset) (*dashboard, error) {
 		issues:      issues,
 		prs:         prs,
 		operatorLog: dispLog,
-		timberbot:   timberbot,
 	}, nil
 }
 
@@ -356,28 +343,6 @@ func printDashboard(d *dashboard) {
 	}
 	fmt.Println()
 
-	// timberbot
-	if d.timberbot.Enabled {
-		fmt.Println("=== TIMBERBOT ===")
-		fmt.Printf("  status: enabled\n")
-		fmt.Printf("  goal: %s\n", d.timberbot.Goal)
-		fmt.Printf("  rounds: %d\n", d.timberbot.Rounds)
-		var tbPod *types.AgentPod
-		for i := range d.pods {
-			if d.pods[i].JobKind == "timberbot" && (d.pods[i].Phase == types.PhaseRunning || d.pods[i].Phase == types.PhasePending) {
-				tbPod = &d.pods[i]
-				break
-			}
-		}
-		if tbPod != nil {
-			agent := types.AgentName(tbPod.Family, tbPod.Slot)
-			fmt.Printf("  agent: %s  pod: %s  uptime: %s\n", agent, tbPod.Name, format.FmtDuration(tbPod.Started, nil))
-		} else {
-			fmt.Printf("  agent: (waiting for dispatch)\n")
-		}
-		fmt.Println()
-	}
-
 	// 2. Local review
 	fmt.Println("=== LOCAL REVIEW ===")
 	if len(d.dispatch.ReviewReservations) == 0 {
@@ -505,7 +470,6 @@ func runTop(cmd *cobra.Command, args []string) error {
 			PRs:         d.prs,
 			OperatorLog: d.operatorLog,
 			LiveLogs:    liveLogs,
-			Timberbot:   d.timberbot,
 		}, nil
 	}
 
@@ -513,14 +477,13 @@ func runTop(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 
 		var (
-			dispatch  types.DispatchStateInfo
-			pods      []types.AgentPod
-			dispLog   string
-			tbInfo    types.TimberbotInfo
-			wg2       sync.WaitGroup
-			mu2       sync.Mutex
+			dispatch types.DispatchStateInfo
+			pods     []types.AgentPod
+			dispLog  string
+			wg2      sync.WaitGroup
+			mu2      sync.Mutex
 		)
-		wg2.Add(4)
+		wg2.Add(3)
 		go func() {
 			defer wg2.Done()
 			s, _ := k8s.GetDispatchState(ctx)
@@ -542,13 +505,6 @@ func runTop(cmd *cobra.Command, args []string) error {
 			dispLog = d
 			mu2.Unlock()
 		}()
-		go func() {
-			defer wg2.Done()
-			t, _ := k8s.GetTimberbotSpec(ctx)
-			mu2.Lock()
-			tbInfo = t
-			mu2.Unlock()
-		}()
 		wg2.Wait()
 
 		// sync streaming logs
@@ -568,7 +524,6 @@ func runTop(cmd *cobra.Command, args []string) error {
 			PRs:         current.PRs,
 			OperatorLog: dispLog,
 			LiveLogs:    liveLogs,
-			Timberbot:   tbInfo,
 		}, nil
 	}
 

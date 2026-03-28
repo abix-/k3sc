@@ -1015,6 +1015,21 @@ func GetActiveTimberbotJobs(ctx context.Context, cs *kubernetes.Clientset) ([]ba
 	return active, nil
 }
 
+// GetTimberbotJobs returns all timberbot jobs, newest first.
+func GetTimberbotJobs(ctx context.Context, cs *kubernetes.Clientset) ([]batchv1.Job, error) {
+	jobs, err := cs.BatchV1().Jobs(types.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "job-kind=timberbot",
+	})
+	if err != nil {
+		return nil, err
+	}
+	items := jobs.Items
+	sort.Slice(items, func(i, j int) bool {
+		return items[j].CreationTimestamp.Before(&items[i].CreationTimestamp)
+	})
+	return items, nil
+}
+
 func GetOperatorLog(ctx context.Context, cs *kubernetes.Clientset) (string, error) {
 	pods, err := cs.CoreV1().Pods(types.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app=k3sc-operator",
