@@ -158,8 +158,8 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	// configmap from job template (special: create --dry-run | apply)
-	cmCmd := fmt.Sprintf("%s create configmap dispatcher-scripts -n claude-agents --from-file=job-template.yaml=%s/job-template.yaml --dry-run=client -o yaml | %s apply -f -",
-		kubectl, mntManifests, kubectl)
+	cmCmd := fmt.Sprintf("%s create configmap dispatcher-scripts -n claude-agents --from-file=job-template.yaml=%s/job-template.yaml --from-file=timberbot-job-template.yaml=%s/timberbot-job-template.yaml --dry-run=client -o yaml | %s apply -f -",
+		kubectl, mntManifests, mntManifests, kubectl)
 	if err := runCmd("applying job template configmap",
 		"wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", cmCmd); err != nil {
 		return fmt.Errorf("apply configmap: %w", err)
