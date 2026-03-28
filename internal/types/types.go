@@ -102,6 +102,7 @@ type AgentPod struct {
 	Finished *time.Time
 	LogTail  string
 	Repo     Repo
+	JobKind  string
 }
 
 // RepoByName finds a repo by name from the Repos list, defaulting to the first.

@@ -188,6 +188,7 @@ func GetAgentPods(ctx context.Context, cs *kubernetes.Clientset) ([]types.AgentP
 			Started:  started,
 			Finished: finished,
 			Repo:     repo,
+			JobKind:  p.Labels["job-kind"],
 		})
 	}
 

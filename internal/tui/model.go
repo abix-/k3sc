@@ -30,6 +30,7 @@ type Data struct {
 	PRs         []types.PullRequest
 	OperatorLog string
 	LiveLogs    []LiveLog
+	Timberbot   types.TimberbotInfo
 }
 
 type GatherFunc func() (*Data, error)
@@ -347,6 +348,33 @@ func (m Model) renderView(maxVisibleTasks int) string {
 	sections = append(sections, sep)
 	sections = append(sections, titleFg.Render(" Quota"))
 	sections = append(sections, strings.Join(quotaLines, "\n"))
+
+	// -- timberbot --
+	if d.Timberbot.Enabled {
+		var tbPod *types.AgentPod
+		for i := range d.Pods {
+			if d.Pods[i].JobKind == "timberbot" && (d.Pods[i].Phase == types.PhaseRunning || d.Pods[i].Phase == types.PhasePending) {
+				tbPod = &d.Pods[i]
+				break
+			}
+		}
+		sections = append(sections, sep)
+		tbStatus := green.Render(" Timberbot  RUNNING")
+		if tbPod == nil {
+			tbStatus = yellow.Render(" Timberbot  WAITING")
+		}
+		sections = append(sections, tbStatus)
+		sections = append(sections, fmt.Sprintf("  goal: %s  |  rounds: %d", d.Timberbot.Goal, d.Timberbot.Rounds))
+		if tbPod != nil {
+			agent := types.AgentName(tbPod.Family, tbPod.Slot)
+			dur := format.FmtDuration(tbPod.Started, nil)
+			tail := ""
+			if tbPod.LogTail != "" {
+				tail = "  " + format.Truncate(tbPod.LogTail, w-60)
+			}
+			sections = append(sections, green.Render(fmt.Sprintf("  agent: %s  |  pod: %s  |  uptime: %s%s", agent, tbPod.Name, dur, tail)))
+		}
+	}
 
 	// -- local review reservations --
 	var reservationLines []string
