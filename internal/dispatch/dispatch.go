@@ -75,6 +75,33 @@ func LoadTemplate() (string, error) {
 	return string(data), nil
 }
 
+// LoadTimberbotTemplate finds and reads the timberbot job template YAML.
+func LoadTimberbotTemplate() (string, error) {
+	templatePath := os.Getenv("TIMBERBOT_JOB_TEMPLATE")
+	if templatePath == "" {
+		exe, _ := os.Executable()
+		candidates := []string{
+			filepath.Join(filepath.Dir(exe), "manifests", "timberbot-job-template.yaml"),
+			filepath.Join("manifests", "timberbot-job-template.yaml"),
+			"/etc/dispatcher/timberbot-job-template.yaml",
+		}
+		for _, c := range candidates {
+			if _, err := os.Stat(c); err == nil {
+				templatePath = c
+				break
+			}
+		}
+		if templatePath == "" {
+			templatePath = candidates[len(candidates)-1]
+		}
+	}
+	data, err := os.ReadFile(templatePath)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
 // RepoFromString parses "owner/name" into a types.Repo, defaulting to first configured repo.
 func RepoFromString(s string) types.Repo {
 	for _, r := range types.Repos {

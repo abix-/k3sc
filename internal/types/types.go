@@ -129,6 +129,12 @@ type TaskInfo struct {
 	LogTail      string
 }
 
+type TimberbotInfo struct {
+	Enabled bool
+	Goal    string
+	Rounds  int
+}
+
 type DispatchFamilyStatus struct {
 	Family    AgentFamily
 	Available bool

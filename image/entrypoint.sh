@@ -11,20 +11,25 @@ AGENT_ID="${AGENT_FAMILY}-${SLOT_LETTER}"
 REPO_NAME=$(basename "${REPO_URL}" .git)
 WORKSPACE="/workspaces/${REPO_NAME}-${AGENT_ID}"
 
-export CARGO_TARGET_DIR="/cargo-target"
-export CARGO_HOME="/cargo-home"
-# seed cargo-home from image if empty (first run)
-if [ ! -f "${CARGO_HOME}/bin/cargo" ]; then
-    echo "[entrypoint] seeding CARGO_HOME from image..."
-    cp -a /usr/local/cargo/bin "${CARGO_HOME}/"
-    cp -a /usr/local/cargo/env* "${CARGO_HOME}/" 2>/dev/null || true
-    mkdir -p "${CARGO_HOME}/registry" "${CARGO_HOME}/git"
+JOB_KIND="${JOB_KIND:-issue}"
+
+# skip cargo setup for non-code jobs
+if [ "$JOB_KIND" != "timberbot" ]; then
+    export CARGO_TARGET_DIR="/cargo-target"
+    export CARGO_HOME="/cargo-home"
+    # seed cargo-home from image if empty (first run)
+    if [ ! -f "${CARGO_HOME}/bin/cargo" ]; then
+        echo "[entrypoint] seeding CARGO_HOME from image..."
+        cp -a /usr/local/cargo/bin "${CARGO_HOME}/"
+        cp -a /usr/local/cargo/env* "${CARGO_HOME}/" 2>/dev/null || true
+        mkdir -p "${CARGO_HOME}/registry" "${CARGO_HOME}/git"
+    fi
+    # seed rustup settings
+    if [ ! -d "${HOME}/.rustup" ]; then
+        ln -sf /usr/local/rustup "${HOME}/.rustup"
+    fi
+    export PATH="${CARGO_HOME}/bin:${PATH}"
 fi
-# seed rustup settings
-if [ ! -d "${HOME}/.rustup" ]; then
-    ln -sf /usr/local/rustup "${HOME}/.rustup"
-fi
-export PATH="${CARGO_HOME}/bin:${PATH}"
 install -d -m 700 "${HOME}/.codex" 2>/dev/null || true
 if [ ! -d "${HOME}/.codex" ] || [ ! -w "${HOME}/.codex" ]; then
     echo "[entrypoint] ERROR: ${HOME}/.codex must be writable for auth bootstrap"
@@ -80,12 +85,23 @@ gh auth status 2>&1 || true
 AGENT_FAMILY="${AGENT_FAMILY:-claude}"
 echo "[entrypoint] agent family: ${AGENT_FAMILY}"
 
-JOB_KIND="${JOB_KIND:-issue}"
 PR_NUMBER="${PR_NUMBER:-0}"
 echo "[entrypoint] job_kind=${JOB_KIND} pr=${PR_NUMBER}"
 
 # build prompt based on job kind
-if [ "$JOB_KIND" = "review" ]; then
+if [ "$JOB_KIND" = "timberbot" ]; then
+    TIMBERBOT_GOAL="${TIMBERBOT_GOAL:-play the game}"
+    TIMBERBOT_ROUNDS="${TIMBERBOT_ROUNDS:-5}"
+    # add timberbot to PATH and resolve game host for WSL2->Windows
+    export PATH="/timberbot:${PATH}"
+    TIMBERBOT_HOST="${TIMBERBOT_HOST:-$(ip route show default | awk '/default/ {print $3}')}"
+    export TIMBERBOT_HOST
+    echo "[entrypoint] timberbot host=${TIMBERBOT_HOST} rounds=${TIMBERBOT_ROUNDS} goal=${TIMBERBOT_GOAL}"
+    SKILL_PROMPT="/timberbot
+Run /timberbot ${TIMBERBOT_ROUNDS} times. Use --host=${TIMBERBOT_HOST} on every timberbot.py call.
+Goal: ${TIMBERBOT_GOAL}
+After completing ${TIMBERBOT_ROUNDS} rounds, exit cleanly."
+elif [ "$JOB_KIND" = "review" ]; then
     SKILL_PROMPT="/review ${REPO_NAME} ${PR_NUMBER}"
 else
     SKILL_PROMPT="/issue ${REPO_NAME} ${ISSUE_NUMBER}"

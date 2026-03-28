@@ -10,6 +10,7 @@ import (
 	"github.com/abix-/k3sc/internal/config"
 	"github.com/abix-/k3sc/internal/dispatch"
 	"github.com/abix-/k3sc/internal/github"
+	"github.com/abix-/k3sc/internal/k8s"
 	coretypes "github.com/abix-/k3sc/internal/types"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,9 +88,10 @@ func pickAvailableFamily(claudeAvailable, codexAvailable bool) (coretypes.AgentF
 
 type DispatchReconciler struct {
 	client.Client
-	APIReader client.Reader
-	K8s       *kubernetes.Clientset
-	Namespace string
+	APIReader         client.Reader
+	K8s               *kubernetes.Clientset
+	Namespace         string
+	TimberbotTemplate string
 }
 
 type issueTaskState struct {
@@ -137,7 +139,7 @@ func (r *DispatchReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	}
 
 	logger := log.FromContext(ctx).WithName("scheduler")
-	scan, err := r.scan(ctx, state.Spec.DisabledFamilies)
+	scan, err := r.scan(ctx, state.Spec.DisabledFamilies, state.Spec.Timberbot)
 	if err != nil {
 		logger.Error(err, "scan failed")
 	}
@@ -252,13 +254,18 @@ func nextDispatchInterval(minInterval, maxInterval time.Duration, idleScans int)
 	return interval
 }
 
-func (r *DispatchReconciler) scan(ctx context.Context, disabledFamilies []string) (scanResult, error) {
+func (r *DispatchReconciler) scan(ctx context.Context, disabledFamilies []string, timberbotSpec *TimberbotSpec) (scanResult, error) {
 	tasks, groups, err := r.loadTaskState(ctx)
 	if err != nil {
 		return scanResult{}, err
 	}
 
 	r.cleanupTerminalTasks(ctx, tasks)
+
+	// phase 0: timberbot dispatch (before issue pipeline)
+	if timberbotSpec != nil && timberbotSpec.Enabled && r.TimberbotTemplate != "" {
+		r.dispatchTimberbot(ctx, timberbotSpec)
+	}
 
 	reviewReservations, reviewReservationsByIssue, err := r.loadReviewReservations(ctx)
 	if err != nil {
@@ -477,6 +484,41 @@ func (r *DispatchReconciler) scan(ctx context.Context, disabledFamilies []string
 	}
 
 	return result, nil
+}
+
+func (r *DispatchReconciler) dispatchTimberbot(ctx context.Context, spec *TimberbotSpec) {
+	active, err := k8s.GetActiveTimberbotJobs(ctx, r.K8s)
+	if err != nil {
+		olog("timberbot", "list active jobs: %v", err)
+		return
+	}
+	if len(active) > 0 {
+		return // one already running
+	}
+
+	maxSlots := dispatch.MaxSlots()
+	slot, err := dispatch.FindFreeSlot(ctx, r.K8s, maxSlots)
+	if err != nil {
+		olog("timberbot", "find slot: %v", err)
+		return
+	}
+	if slot == -1 {
+		olog("timberbot", "no free slots")
+		return
+	}
+
+	family := string(coretypes.FamilyClaude)
+	rounds := spec.Rounds
+	if rounds <= 0 {
+		rounds = 5
+	}
+
+	jobName, err := k8s.CreateTimberbotJob(ctx, r.K8s, r.TimberbotTemplate, slot, family, spec.Goal, rounds)
+	if err != nil {
+		olog("timberbot", "create job: %v", err)
+		return
+	}
+	olog("timberbot", "dispatched %s (slot %d, %d rounds, goal: %s)", jobName, slot, rounds, spec.Goal)
 }
 
 func (r *DispatchReconciler) loadTaskState(ctx context.Context) ([]AgentJob, map[string]*issueTaskState, error) {

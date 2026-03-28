@@ -112,6 +112,19 @@ spec:
                 triggerNonce:
                   type: integer
                   format: int64
+                disabledFamilies:
+                  type: array
+                  items:
+                    type: string
+                timberbot:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                    goal:
+                      type: string
+                    rounds:
+                      type: integer
             status:
               type: object
               properties:
@@ -170,6 +183,11 @@ spec:
                       expiresAt:
                         type: string
                         format: date-time
+                timberbotRuns:
+                  type: integer
+                timberbotLastRun:
+                  type: string
+                  format: date-time
       subresources:
         status: {}
       additionalPrinterColumns:

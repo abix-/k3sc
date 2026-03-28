@@ -1,0 +1,100 @@
+# Template for timberbot player jobs.
+# __AGENT_SLOT__, __SLOT_LETTER__, __AGENT_FAMILY__, __TIMBERBOT_GOAL__, __TIMBERBOT_ROUNDS__ are replaced at creation time.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: "timberbot-__SLOT_LETTER__"
+  namespace: claude-agents
+  labels:
+    app: claude-agent
+    job-kind: timberbot
+    agent-slot: "__AGENT_SLOT__"
+    agent-family: "__AGENT_FAMILY__"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 7200
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: claude-agent
+        job-kind: timberbot
+        agent-slot: "__AGENT_SLOT__"
+        agent-family: "__AGENT_FAMILY__"
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: claude-agent
+          image: claude-agent:latest
+          imagePullPolicy: Never
+          env:
+            - name: ISSUE_NUMBER
+              value: "0"
+            - name: AGENT_SLOT
+              value: "__AGENT_SLOT__"
+            - name: SLOT_LETTER
+              value: "__SLOT_LETTER__"
+            - name: REPO_URL
+              value: "https://github.com/abix-/k3sc.git"
+            - name: AGENT_FAMILY
+              value: "__AGENT_FAMILY__"
+            - name: JOB_KIND
+              value: "timberbot"
+            - name: PR_NUMBER
+              value: "0"
+            - name: TIMBERBOT_GOAL
+              value: "__TIMBERBOT_GOAL__"
+            - name: TIMBERBOT_ROUNDS
+              value: "__TIMBERBOT_ROUNDS__"
+            - name: CLAUDE_CODE_OAUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: claude-secrets
+                  key: CLAUDE_CODE_OAUTH_TOKEN
+                  optional: true
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: claude-secrets
+                  key: GITHUB_TOKEN
+          volumeMounts:
+            - name: timberbot
+              mountPath: /timberbot
+            - name: workspaces
+              mountPath: /workspaces
+            - name: claude-skills
+              mountPath: /home/claude/.claude/skills
+              readOnly: true
+            - name: claude-commands
+              mountPath: /home/claude/.claude/commands
+              readOnly: true
+            - name: claude-docs
+              mountPath: /home/claude/.claude/docs
+              readOnly: true
+            - name: claude-md
+              mountPath: /home/claude/.claude/CLAUDE.md
+              readOnly: true
+      volumes:
+        - name: timberbot
+          hostPath:
+            path: /mnt/c/Users/Abix/Documents/Timberborn/Mods/Timberbot
+            type: Directory
+        - name: workspaces
+          persistentVolumeClaim:
+            claimName: workspaces
+        - name: claude-skills
+          hostPath:
+            path: /mnt/c/Users/Abix/.claude/skills
+            type: Directory
+        - name: claude-commands
+          hostPath:
+            path: /mnt/c/Users/Abix/.claude/commands
+            type: Directory
+        - name: claude-docs
+          hostPath:
+            path: /mnt/c/Users/Abix/.claude/docs
+            type: Directory
+        - name: claude-md
+          hostPath:
+            path: /mnt/c/Users/Abix/.claude/CLAUDE.md
+            type: File

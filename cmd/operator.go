@@ -97,6 +97,12 @@ func runOperator(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load template: %w", err)
 	}
 
+	timberbotTemplate, err := dispatch.LoadTimberbotTemplate()
+	if err != nil {
+		fmt.Printf("[operator] timberbot template not found, timberbot dispatch disabled: %v\n", err)
+		timberbotTemplate = ""
+	}
+
 	reconciler := &operator.Reconciler{
 		Client:   mgr.GetClient(),
 		K8s:      cs,
@@ -107,10 +113,11 @@ func runOperator(cmd *cobra.Command, args []string) error {
 	}
 
 	dispatcher := &operator.DispatchReconciler{
-		Client:    mgr.GetClient(),
-		APIReader: mgr.GetAPIReader(),
-		K8s:       cs,
-		Namespace: types.Namespace,
+		Client:            mgr.GetClient(),
+		APIReader:         mgr.GetAPIReader(),
+		K8s:               cs,
+		Namespace:         types.Namespace,
+		TimberbotTemplate: timberbotTemplate,
 	}
 	if err := dispatcher.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("setup scheduler: %w", err)

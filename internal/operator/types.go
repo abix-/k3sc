@@ -92,8 +92,15 @@ type DispatchState struct {
 }
 
 type DispatchStateSpec struct {
-	TriggerNonce     int64    `json:"triggerNonce,omitempty"`
-	DisabledFamilies []string `json:"disabledFamilies,omitempty"`
+	TriggerNonce     int64          `json:"triggerNonce,omitempty"`
+	DisabledFamilies []string       `json:"disabledFamilies,omitempty"`
+	Timberbot        *TimberbotSpec `json:"timberbot,omitempty"`
+}
+
+type TimberbotSpec struct {
+	Enabled bool   `json:"enabled"`
+	Goal    string `json:"goal,omitempty"`
+	Rounds  int    `json:"rounds,omitempty"`
 }
 
 type DispatchFamilyStatus struct {
@@ -111,6 +118,8 @@ type DispatchStateStatus struct {
 	LastWorkTime         *metav1.Time                      `json:"lastWorkTime,omitempty"`
 	FamilyStatuses       []DispatchFamilyStatus            `json:"familyStatuses,omitempty"`
 	ReviewReservations   []DispatchReviewReservationStatus `json:"reviewReservations,omitempty"`
+	TimberbotRuns        int                               `json:"timberbotRuns,omitempty"`
+	TimberbotLastRun     *metav1.Time                      `json:"timberbotLastRun,omitempty"`
 }
 
 type DispatchStateList struct {
@@ -200,6 +209,10 @@ func (in *DispatchState) DeepCopyObject() runtime.Object {
 	if in.Spec.DisabledFamilies != nil {
 		out.Spec.DisabledFamilies = append([]string(nil), in.Spec.DisabledFamilies...)
 	}
+	if in.Spec.Timberbot != nil {
+		t := *in.Spec.Timberbot
+		out.Spec.Timberbot = &t
+	}
 	if in.Status.LastScanTime != nil {
 		t := *in.Status.LastScanTime
 		out.Status.LastScanTime = &t
@@ -224,6 +237,10 @@ func (in *DispatchState) DeepCopyObject() runtime.Object {
 				out.Status.ReviewReservations[i].ExpiresAt = &t
 			}
 		}
+	}
+	if in.Status.TimberbotLastRun != nil {
+		t := *in.Status.TimberbotLastRun
+		out.Status.TimberbotLastRun = &t
 	}
 	return out
 }

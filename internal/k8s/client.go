@@ -449,6 +449,62 @@ func SetDisabledFamilies(ctx context.Context, families []string) error {
 	return nil
 }
 
+func GetTimberbotSpec(ctx context.Context) (types.TimberbotInfo, error) {
+	cfg, err := getConfig()
+	if err != nil {
+		return types.TimberbotInfo{}, err
+	}
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return types.TimberbotInfo{}, fmt.Errorf("dynamic client: %w", err)
+	}
+
+	state, err := dc.Resource(dispatchStateGVR).Namespace(types.Namespace).Get(ctx, types.DispatchStateName, metav1.GetOptions{})
+	if err != nil {
+		return types.TimberbotInfo{}, fmt.Errorf("get dispatch state: %w", err)
+	}
+
+	enabled, _, _ := unstructured.NestedBool(state.Object, "spec", "timberbot", "enabled")
+	goal, _, _ := unstructured.NestedString(state.Object, "spec", "timberbot", "goal")
+	rounds, _, _ := unstructured.NestedInt64(state.Object, "spec", "timberbot", "rounds")
+	return types.TimberbotInfo{
+		Enabled: enabled,
+		Goal:    goal,
+		Rounds:  int(rounds),
+	}, nil
+}
+
+func SetTimberbotSpec(ctx context.Context, info types.TimberbotInfo) error {
+	cfg, err := getConfig()
+	if err != nil {
+		return err
+	}
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return fmt.Errorf("dynamic client: %w", err)
+	}
+
+	resource := dc.Resource(dispatchStateGVR).Namespace(types.Namespace)
+	state, err := resource.Get(ctx, types.DispatchStateName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("get dispatch state: %w", err)
+	}
+
+	tb := map[string]any{
+		"enabled": info.Enabled,
+		"goal":    info.Goal,
+		"rounds":  int64(info.Rounds),
+	}
+	if err := unstructured.SetNestedField(state.Object, tb, "spec", "timberbot"); err != nil {
+		return fmt.Errorf("set timberbot spec: %w", err)
+	}
+
+	if _, err := resource.Update(ctx, state, metav1.UpdateOptions{}); err != nil {
+		return fmt.Errorf("update dispatch state: %w", err)
+	}
+	return nil
+}
+
 func nestedTime(entry map[string]any, key string) (*time.Time, bool) {
 	raw, found, err := unstructured.NestedString(entry, key)
 	if err != nil || !found || raw == "" {
@@ -898,6 +954,64 @@ func CreateJobFromTemplate(ctx context.Context, cs *kubernetes.Clientset, templa
 		return "", err
 	}
 	return created.Name, nil
+}
+
+func CreateTimberbotJob(ctx context.Context, cs *kubernetes.Clientset, template string, slot int, family, goal string, rounds int) (string, error) {
+	timestamp := time.Now().Unix()
+
+	m := strings.ReplaceAll(template, "__AGENT_SLOT__", strconv.Itoa(slot))
+	m = strings.ReplaceAll(m, "__SLOT_LETTER__", types.SlotLetter(slot))
+	m = strings.ReplaceAll(m, "__AGENT_FAMILY__", family)
+	m = strings.ReplaceAll(m, "__TIMBERBOT_GOAL__", goal)
+	m = strings.ReplaceAll(m, "__TIMBERBOT_ROUNDS__", strconv.Itoa(rounds))
+
+	// add timestamp to job name for uniqueness
+	m = strings.Replace(m,
+		fmt.Sprintf(`name: "timberbot-%s"`, types.SlotLetter(slot)),
+		fmt.Sprintf(`name: "timberbot-%s-%d"`, types.SlotLetter(slot), timestamp),
+		1,
+	)
+
+	var job batchv1.Job
+	decoder := yaml.NewYAMLOrJSONDecoder(bytes.NewReader([]byte(m)), 4096)
+	if err := decoder.Decode(&job); err != nil {
+		return "", fmt.Errorf("decode timberbot job manifest: %w", err)
+	}
+
+	created, err := cs.BatchV1().Jobs(types.Namespace).Create(ctx, &job, metav1.CreateOptions{})
+	if err != nil {
+		return "", err
+	}
+	return created.Name, nil
+}
+
+// GetActiveTimberbotJobs returns active (non-terminal) timberbot jobs.
+func GetActiveTimberbotJobs(ctx context.Context, cs *kubernetes.Clientset) ([]batchv1.Job, error) {
+	jobs, err := cs.BatchV1().Jobs(types.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "job-kind=timberbot",
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	var active []batchv1.Job
+	for _, j := range jobs.Items {
+		if j.Status.Succeeded > 0 || j.Status.Failed > 0 {
+			continue
+		}
+		dead := false
+		for _, c := range j.Status.Conditions {
+			if c.Type == batchv1.JobFailed && c.Status == "True" {
+				dead = true
+				break
+			}
+		}
+		if dead {
+			continue
+		}
+		active = append(active, j)
+	}
+	return active, nil
 }
 
 func GetOperatorLog(ctx context.Context, cs *kubernetes.Clientset) (string, error) {

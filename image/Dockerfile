@@ -5,8 +5,11 @@ ENV DEBIAN_FRONTEND=noninteractive
 # system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates git build-essential pkg-config \
-    libssl-dev unzip jq && \
+    libssl-dev unzip jq python3 python3-pip && \
     rm -rf /var/lib/apt/lists/*
+
+# python deps for timberbot
+RUN pip3 install --break-system-packages requests toons
 
 # node.js 22 LTS
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
