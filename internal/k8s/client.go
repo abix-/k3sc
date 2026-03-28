@@ -468,10 +468,12 @@ func GetTimberbotSpec(ctx context.Context) (types.TimberbotInfo, error) {
 	enabled, _, _ := unstructured.NestedBool(state.Object, "spec", "timberbot", "enabled")
 	goal, _, _ := unstructured.NestedString(state.Object, "spec", "timberbot", "goal")
 	rounds, _, _ := unstructured.NestedInt64(state.Object, "spec", "timberbot", "rounds")
+	host, _, _ := unstructured.NestedString(state.Object, "spec", "timberbot", "host")
 	return types.TimberbotInfo{
 		Enabled: enabled,
 		Goal:    goal,
 		Rounds:  int(rounds),
+		Host:    host,
 	}, nil
 }
 
@@ -495,6 +497,7 @@ func SetTimberbotSpec(ctx context.Context, info types.TimberbotInfo) error {
 		"enabled": info.Enabled,
 		"goal":    info.Goal,
 		"rounds":  int64(info.Rounds),
+		"host":    info.Host,
 	}
 	if err := unstructured.SetNestedField(state.Object, tb, "spec", "timberbot"); err != nil {
 		return fmt.Errorf("set timberbot spec: %w", err)
@@ -957,7 +960,7 @@ func CreateJobFromTemplate(ctx context.Context, cs *kubernetes.Clientset, templa
 	return created.Name, nil
 }
 
-func CreateTimberbotJob(ctx context.Context, cs *kubernetes.Clientset, template string, slot int, family, goal string, rounds int) (string, error) {
+func CreateTimberbotJob(ctx context.Context, cs *kubernetes.Clientset, template string, slot int, family, goal, host string, rounds int) (string, error) {
 	timestamp := time.Now().Unix()
 
 	m := strings.ReplaceAll(template, "__AGENT_SLOT__", strconv.Itoa(slot))
@@ -965,6 +968,7 @@ func CreateTimberbotJob(ctx context.Context, cs *kubernetes.Clientset, template 
 	m = strings.ReplaceAll(m, "__AGENT_FAMILY__", family)
 	m = strings.ReplaceAll(m, "__TIMBERBOT_GOAL__", goal)
 	m = strings.ReplaceAll(m, "__TIMBERBOT_ROUNDS__", strconv.Itoa(rounds))
+	m = strings.ReplaceAll(m, "__TIMBERBOT_HOST__", host)
 
 	// add timestamp to job name for uniqueness
 	m = strings.Replace(m,

@@ -94,10 +94,10 @@ if [ "$JOB_KIND" = "timberbot" ]; then
     TIMBERBOT_ROUNDS="${TIMBERBOT_ROUNDS:-5}"
     # add timberbot to PATH and resolve game host for WSL2->Windows
     export PATH="/timberbot:${PATH}"
-    TIMBERBOT_HOST="${TIMBERBOT_HOST:-$(ip route show default | awk '/default/ {print $3}')}"
+    TIMBERBOT_HOST="${TIMBERBOT_HOST:-$(ip route show default 2>/dev/null | awk '/default/ {print $3}')}"
     export TIMBERBOT_HOST
     echo "[entrypoint] timberbot host=${TIMBERBOT_HOST} rounds=${TIMBERBOT_ROUNDS} goal=${TIMBERBOT_GOAL}"
-    SKILL_PROMPT="/timberbot
+    SKILL_PROMPT="Skip /obey. Go straight to /timberbot.
 Run /timberbot ${TIMBERBOT_ROUNDS} times. Use --host=${TIMBERBOT_HOST} on every timberbot.py call.
 Goal: ${TIMBERBOT_GOAL}
 After completing ${TIMBERBOT_ROUNDS} rounds, exit cleanly."

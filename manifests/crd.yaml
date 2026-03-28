@@ -125,6 +125,8 @@ spec:
                       type: string
                     rounds:
                       type: integer
+                    host:
+                      type: string
             status:
               type: object
               properties:

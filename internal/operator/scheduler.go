@@ -513,7 +513,7 @@ func (r *DispatchReconciler) dispatchTimberbot(ctx context.Context, spec *Timber
 		rounds = 5
 	}
 
-	jobName, err := k8s.CreateTimberbotJob(ctx, r.K8s, r.TimberbotTemplate, slot, family, spec.Goal, rounds)
+	jobName, err := k8s.CreateTimberbotJob(ctx, r.K8s, r.TimberbotTemplate, slot, family, spec.Goal, spec.Host, rounds)
 	if err != nil {
 		olog("timberbot", "create job: %v", err)
 		return

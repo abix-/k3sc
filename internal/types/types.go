@@ -134,6 +134,7 @@ type TimberbotInfo struct {
 	Enabled bool
 	Goal    string
 	Rounds  int
+	Host    string
 }
 
 type DispatchFamilyStatus struct {

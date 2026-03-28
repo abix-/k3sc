@@ -101,6 +101,7 @@ type TimberbotSpec struct {
 	Enabled bool   `json:"enabled"`
 	Goal    string `json:"goal,omitempty"`
 	Rounds  int    `json:"rounds,omitempty"`
+	Host    string `json:"host,omitempty"`
 }
 
 type DispatchFamilyStatus struct {

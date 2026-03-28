@@ -46,6 +46,8 @@ spec:
               value: "__TIMBERBOT_GOAL__"
             - name: TIMBERBOT_ROUNDS
               value: "__TIMBERBOT_ROUNDS__"
+            - name: TIMBERBOT_HOST
+              value: "__TIMBERBOT_HOST__"
             - name: CLAUDE_CODE_OAUTH_TOKEN
               valueFrom:
                 secretKeyRef:

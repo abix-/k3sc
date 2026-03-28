@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -64,6 +65,7 @@ func runTimberbotStart(cmd *cobra.Command, args []string) error {
 		Enabled: true,
 		Goal:    goal,
 		Rounds:  timberbotRounds,
+		Host:    resolveWSLGateway(),
 	}
 	if err := k8s.SetTimberbotSpec(ctx, info); err != nil {
 		return err
@@ -118,6 +120,16 @@ func runTimberbotStatus(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  goal: %s\n", info.Goal)
 	fmt.Printf("  rounds: %d\n", info.Rounds)
 	return nil
+}
+
+// resolveWSLGateway gets the WSL2 default gateway (Windows host IP) by asking WSL.
+func resolveWSLGateway() string {
+	out, err := exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c",
+		"ip route show default | awk '/default/ {print \\$3}'").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func runTimberbotTop(cmd *cobra.Command, args []string) error {
