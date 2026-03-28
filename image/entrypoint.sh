@@ -131,12 +131,17 @@ else
     claude --version 2>&1 || true
 
     echo "[entrypoint] launching claude for ${REPO_NAME}#${ISSUE_NUMBER} (${JOB_KIND})..."
-    claude --dangerously-skip-permissions -p "/obey
+    MODEL_FLAG=""
+    if [ -n "${CLAUDE_MODEL:-}" ]; then
+        MODEL_FLAG="--model ${CLAUDE_MODEL}"
+    fi
+    claude --dangerously-skip-permissions ${MODEL_FLAG} -p "/obey
 ${SKILL_PROMPT}" \
         --output-format stream-json --verbose --include-partial-messages 2>&1 | \
         while IFS= read -r line || [ -n "$line" ]; do
             if parsed=$(printf '%s\n' "$line" | jq -rj 'if .type == "stream_event" and .event.delta.type? == "text_delta" then .event.delta.text
-             elif .type == "assistant" then (.message.content[]? | select(.type=="tool_use") | "\n[tool] " + .name + "\n")
+             elif .type == "assistant" then (.message.content[]? | select(.type=="tool_use") | "\n[tool] " + .name + (if .name == "Bash" then ": " + (.input.command // "" | split("\n")[0] | .[:120]) elif .name == "Read" then ": " + (.input.file_path // "") elif .name == "Edit" then ": " + (.input.file_path // "") elif .name == "Grep" then ": " + (.input.pattern // "") elif .name == "Write" then ": " + (.input.file_path // "") else "" end) + "\n")
+             elif .type == "tool_result" then (.message.content[]? | select(.type=="text") | .text | split("\n") | if length > 20 then (.[0:10] | join("\n")) + "\n...[" + (length | tostring) + " lines]\n" + (.[-5:] | join("\n")) else join("\n") end | . + "\n")
              elif .type == "result" then ((.result? // "") | if . != "" then "\n" + . + "\n" else "" end) + "[result] exit\n"
              elif .type == "error" then ((.error.message? // .message? // tostring) + "\n")
              else empty end' 2>/dev/null); then
