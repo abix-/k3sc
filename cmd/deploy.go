@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/abix-/k3sc/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -123,8 +124,16 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	if len(mntRoot) >= 2 && mntRoot[1] == ':' {
 		mntRoot = "/mnt/" + strings.ToLower(mntRoot[:1]) + mntRoot[2:]
 	}
+	imageDir := filepath.Join(repoRoot, "image")
+	if config.C.ImageDir != "" {
+		imageDir = config.C.ImageDir
+	}
+	mntImageDir := strings.ReplaceAll(imageDir, `\`, `/`)
+	if len(mntImageDir) >= 2 && mntImageDir[1] == ':' {
+		mntImageDir = "/mnt/" + strings.ToLower(mntImageDir[:1]) + mntImageDir[2:]
+	}
 	nerdctl := "sudo nerdctl --address /run/k3s/containerd/containerd.sock --namespace k8s.io"
-	buildCmd := fmt.Sprintf("cd %s && %s build -t claude-agent:latest image/", mntRoot, nerdctl)
+	buildCmd := fmt.Sprintf("cd %s && %s build -t claude-agent:latest %s/", mntRoot, nerdctl, mntImageDir)
 	if err := runCmd("building container image",
 		"wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", buildCmd); err != nil {
 		return fmt.Errorf("image build: %w", err)

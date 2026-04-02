@@ -17,6 +17,7 @@ type Config struct {
 	Namespace      string       `json:"namespace"`
 	MaxSlots       int          `json:"max_slots"`
 	LaunchDir      string       `json:"launch_dir"`
+	ImageDir       string       `json:"image_dir"`
 	GitHubURL      string       `json:"github_url"`
 	Repos          []RepoConfig `json:"repos"`
 	AllowedAuthors []string     `json:"allowed_authors"`
@@ -110,6 +111,9 @@ func Load() {
 	}
 	if file.LaunchDir != "" {
 		C.LaunchDir = file.LaunchDir
+	}
+	if file.ImageDir != "" {
+		C.ImageDir = file.ImageDir
 	}
 	if file.GitHubURL != "" {
 		C.GitHubURL = file.GitHubURL
