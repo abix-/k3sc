@@ -24,12 +24,25 @@ func newClient(ctx context.Context) *gh.Client {
 			token = strings.TrimSpace(string(out))
 		}
 	}
+
+	var httpClient *gh.Client
 	if token == "" {
-		return gh.NewClient(nil)
+		httpClient = gh.NewClient(nil)
+	} else {
+		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+		tc := oauth2.NewClient(ctx, ts)
+		httpClient = gh.NewClient(tc)
 	}
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-	tc := oauth2.NewClient(ctx, ts)
-	return gh.NewClient(tc)
+
+	baseURL := strings.TrimRight(types.GitHubURL, "/")
+	if baseURL != "" && baseURL != "https://github.com" {
+		apiURL := baseURL + "/api/v3/"
+		uploadURL := baseURL + "/api/uploads/"
+		if ghe, err := httpClient.WithEnterpriseURLs(apiURL, uploadURL); err == nil {
+			return ghe
+		}
+	}
+	return httpClient
 }
 
 // parseIssueLabels extracts workflow state and owner from GitHub labels.

@@ -17,6 +17,7 @@ type Config struct {
 	Namespace      string       `json:"namespace"`
 	MaxSlots       int          `json:"max_slots"`
 	LaunchDir      string       `json:"launch_dir"`
+	GitHubURL      string       `json:"github_url"`
 	Repos          []RepoConfig `json:"repos"`
 	AllowedAuthors []string     `json:"allowed_authors"`
 	Scan           ScanConfig   `json:"scan"`
@@ -62,11 +63,9 @@ func defaults() Config {
 		Namespace:      "claude-agents",
 		MaxSlots:       5,
 		LaunchDir:      launchDirDefault(),
-		AllowedAuthors: []string{"abix-"},
-		Repos: []RepoConfig{
-			{Owner: "abix-", Name: "endless"},
-			{Owner: "abix-", Name: "k3sc"},
-		},
+		GitHubURL:      "https://github.com",
+		AllowedAuthors: []string{},
+		Repos:          []RepoConfig{},
 		Scan: ScanConfig{
 			MinInterval: Duration{2 * time.Minute},
 			MaxInterval: Duration{1 * time.Hour},
@@ -112,6 +111,9 @@ func Load() {
 	if file.LaunchDir != "" {
 		C.LaunchDir = file.LaunchDir
 	}
+	if file.GitHubURL != "" {
+		C.GitHubURL = file.GitHubURL
+	}
 	if len(file.Repos) > 0 {
 		C.Repos = file.Repos
 	}
@@ -134,6 +136,7 @@ func Load() {
 // apply pushes config values into package-level vars in other packages.
 func apply() {
 	types.Namespace = C.Namespace
+	types.GitHubURL = C.GitHubURL
 	repos := make([]types.Repo, len(C.Repos))
 	for i, r := range C.Repos {
 		repos[i] = types.Repo{Owner: r.Owner, Name: r.Name}

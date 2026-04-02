@@ -6,9 +6,14 @@ import (
 	"time"
 )
 
+
 // Namespace and Repos are set by config.Load() at startup.
 // Defaults here match the config defaults as a safety net.
 var Namespace = "claude-agents"
+
+// GitHubURL is the base URL for the GitHub instance (e.g. "https://github.com" or "https://code.ssnc.dev").
+// Set by config.Load() at startup.
+var GitHubURL = "https://github.com"
 
 // DispatchStateName is the singleton scheduler object reconciled by the operator.
 const DispatchStateName = "default"
@@ -19,13 +24,10 @@ type Repo struct {
 }
 
 func (r Repo) CloneURL() string {
-	return "https://github.com/" + r.Owner + "/" + r.Name + ".git"
+	return strings.TrimRight(GitHubURL, "/") + "/" + r.Owner + "/" + r.Name + ".git"
 }
 
-var Repos = []Repo{
-	{Owner: "abix-", Name: "endless"},
-	{Owner: "abix-", Name: "k3sc"},
-}
+var Repos []Repo
 
 // AgentFamily is "claude" or "codex".
 type AgentFamily string

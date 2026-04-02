@@ -8,6 +8,11 @@ import (
 )
 
 func TestParseLogsTarget(t *testing.T) {
+	types.Repos = []types.Repo{
+		{Owner: "abix-", Name: "endless"},
+		{Owner: "abix-", Name: "k3sc"},
+	}
+
 	repo, issue, err := parseLogsTarget(nil)
 	if err != nil {
 		t.Fatalf("parseLogsTarget(nil) error = %v", err)
