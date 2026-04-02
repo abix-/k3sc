@@ -11,7 +11,7 @@ import (
 // Defaults here match the config defaults as a safety net.
 var Namespace = "claude-agents"
 
-// GitHubURL is the base URL for the GitHub instance (e.g. "https://github.com" or "https://code.ssnc.dev").
+// GitHubURL is the base URL for the GitHub instance (e.g. "https://github.com" or a GHE hostname).
 // Set by config.Load() at startup.
 var GitHubURL = "https://github.com"
 
