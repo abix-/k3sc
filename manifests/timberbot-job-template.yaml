@@ -56,6 +56,36 @@ spec:
                   name: claude-secrets
                   key: CLAUDE_CODE_OAUTH_TOKEN
                   optional: true
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: claude-secrets
+                  key: ANTHROPIC_API_KEY
+                  optional: true
+            - name: CLAUDE_CODE_USE_BEDROCK
+              valueFrom:
+                secretKeyRef:
+                  name: claude-secrets
+                  key: CLAUDE_CODE_USE_BEDROCK
+                  optional: true
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: claude-secrets
+                  key: AWS_ACCESS_KEY_ID
+                  optional: true
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: claude-secrets
+                  key: AWS_SECRET_ACCESS_KEY
+                  optional: true
+            - name: AWS_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: claude-secrets
+                  key: AWS_REGION
+                  optional: true
             - name: GITHUB_TOKEN
               valueFrom:
                 secretKeyRef:

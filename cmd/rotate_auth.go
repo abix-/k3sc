@@ -23,6 +23,70 @@ var rotateAuthCmd = &cobra.Command{
 	RunE:  runRotateAuth,
 }
 
+func readAWSCredentialsFile(home string) (keyID, secret, region string) {
+	credsPath := filepath.Join(home, ".aws", "credentials")
+	data, err := os.ReadFile(credsPath)
+	if err != nil {
+		return "", "", ""
+	}
+	inDefault := false
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "[default]" {
+			inDefault = true
+			continue
+		}
+		if strings.HasPrefix(line, "[") {
+			inDefault = false
+			continue
+		}
+		if !inDefault {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		switch key {
+		case "aws_access_key_id":
+			keyID = val
+		case "aws_secret_access_key":
+			secret = val
+		case "region":
+			region = val
+		}
+	}
+	// also check ~/.aws/config for region if not in credentials
+	if region == "" {
+		configPath := filepath.Join(home, ".aws", "config")
+		if cfgData, err := os.ReadFile(configPath); err == nil {
+			inDefault = false
+			for _, line := range strings.Split(string(cfgData), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "[default]" || line == "[profile default]" {
+					inDefault = true
+					continue
+				}
+				if strings.HasPrefix(line, "[") {
+					inDefault = false
+					continue
+				}
+				if !inDefault {
+					continue
+				}
+				parts := strings.SplitN(line, "=", 2)
+				if len(parts) == 2 && strings.TrimSpace(parts[0]) == "region" {
+					region = strings.TrimSpace(parts[1])
+					break
+				}
+			}
+		}
+	}
+	return keyID, secret, region
+}
+
 func runRotateAuth(cmd *cobra.Command, args []string) error {
 	home := os.Getenv("USERPROFILE")
 	if home == "" {
@@ -80,6 +144,32 @@ func runRotateAuth(cmd *cobra.Command, args []string) error {
 				stringData["OPENAI_API_KEY"] = key
 			}
 		}
+	}
+
+	// Anthropic API key (direct API access)
+	if apiKey := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")); apiKey != "" {
+		stringData["ANTHROPIC_API_KEY"] = apiKey
+		fmt.Println("anthropic: read API key from ANTHROPIC_API_KEY env var")
+	}
+
+	// AWS Bedrock credentials
+	awsKeyID := strings.TrimSpace(os.Getenv("AWS_ACCESS_KEY_ID"))
+	awsSecret := strings.TrimSpace(os.Getenv("AWS_SECRET_ACCESS_KEY"))
+	awsRegion := strings.TrimSpace(os.Getenv("AWS_REGION"))
+	if awsKeyID == "" || awsSecret == "" {
+		awsKeyID, awsSecret, awsRegion = readAWSCredentialsFile(home)
+	}
+	if awsKeyID != "" && awsSecret != "" {
+		stringData["AWS_ACCESS_KEY_ID"] = awsKeyID
+		stringData["AWS_SECRET_ACCESS_KEY"] = awsSecret
+		if awsRegion == "" {
+			awsRegion = "us-east-1"
+		}
+		stringData["AWS_REGION"] = awsRegion
+		stringData["CLAUDE_CODE_USE_BEDROCK"] = "1"
+		fmt.Printf("aws: read Bedrock credentials (region=%s)\n", awsRegion)
+	} else {
+		fmt.Fprintln(os.Stderr, "warning: no AWS credentials found, skipping Bedrock auth")
 	}
 
 	if len(stringData) == 0 {

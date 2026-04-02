@@ -122,8 +122,15 @@ if [ "$AGENT_FAMILY" = "codex" ]; then
 ${SKILL_PROMPT}" 2>&1
     EXIT_CODE=$?
 else
-    if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-        echo "[entrypoint] ERROR: CLAUDE_CODE_OAUTH_TOKEN env var is required for Claude agents"
+    # Auth priority: Bedrock > API key > OAuth
+    if [ "${CLAUDE_CODE_USE_BEDROCK:-}" = "1" ] && [ -n "${AWS_ACCESS_KEY_ID:-}" ]; then
+        echo "[entrypoint] claude auth: AWS Bedrock (region=${AWS_REGION:-us-east-1})"
+    elif [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+        echo "[entrypoint] claude auth: API key"
+    elif [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+        echo "[entrypoint] claude auth: OAuth (subscription)"
+    else
+        echo "[entrypoint] ERROR: no Claude auth found (need CLAUDE_CODE_USE_BEDROCK+AWS creds, ANTHROPIC_API_KEY, or CLAUDE_CODE_OAUTH_TOKEN)"
         exit 1
     fi
 
