@@ -26,11 +26,19 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
       restartPolicy: Never
       containers:
         - name: claude-agent
           image: claude-agent:latest
           imagePullPolicy: Never
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: ISSUE_NUMBER
               value: "__ISSUE_NUMBER__"
@@ -112,6 +120,12 @@ spec:
                   key: AWS_SESSION_TOKEN
                   optional: true
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: claude-home
+              mountPath: /home/claude
+            - name: gh-wrapper
+              mountPath: /opt/gh-wrapper
             - name: cargo-target
               mountPath: /cargo-target
             - name: cargo-home
@@ -130,6 +144,12 @@ spec:
               mountPath: /home/claude/.claude/CLAUDE.md
               readOnly: true
       volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: claude-home
+          emptyDir: {}
+        - name: gh-wrapper
+          emptyDir: {}
         - name: cargo-target
           persistentVolumeClaim:
             claimName: cargo-target

@@ -24,11 +24,19 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
       restartPolicy: Never
       containers:
         - name: claude-agent
           image: claude-agent:latest
           imagePullPolicy: Never
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           env:
             - name: ISSUE_NUMBER
               value: "0"
@@ -94,6 +102,12 @@ spec:
                   name: claude-secrets
                   key: GITHUB_TOKEN
           volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: claude-home
+              mountPath: /home/claude
+            - name: gh-wrapper
+              mountPath: /opt/gh-wrapper
             - name: timberbot
               mountPath: /timberbot
             - name: workspaces
@@ -108,6 +122,12 @@ spec:
               mountPath: /home/claude/.claude/CLAUDE.md
               readOnly: true
       volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: claude-home
+          emptyDir: {}
+        - name: gh-wrapper
+          emptyDir: {}
         - name: timberbot
           hostPath:
             path: __HOME_WSL__/Documents/Timberborn/Mods/Timberbot
