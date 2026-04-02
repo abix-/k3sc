@@ -118,6 +118,26 @@ func findRepoRoot() (string, error) {
 	return "", fmt.Errorf("repo root not found: no go.mod in cwd or any parent directory")
 }
 
+func ensureKubeconfig() error {
+	kubeDir := filepath.Join(os.Getenv("USERPROFILE"), ".kube")
+	if err := os.MkdirAll(kubeDir, 0o700); err != nil {
+		return fmt.Errorf("create .kube dir: %w", err)
+	}
+	kubeconfigPath := filepath.Join(kubeDir, "config")
+
+	fmt.Println("=== syncing kubeconfig from k3s ===")
+	c := exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "sudo", "cat", "/etc/rancher/k3s/k3s.yaml")
+	out, err := c.Output()
+	if err != nil {
+		return fmt.Errorf("read k3s kubeconfig: %w", err)
+	}
+	if err := os.WriteFile(kubeconfigPath, out, 0o600); err != nil {
+		return fmt.Errorf("write kubeconfig: %w", err)
+	}
+	fmt.Printf("  wrote %s\n", kubeconfigPath)
+	return nil
+}
+
 func runDeploy(cmd *cobra.Command, args []string) error {
 	repoRoot, err := findRepoRoot()
 	if err != nil {
@@ -125,6 +145,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 	if err := os.Chdir(repoRoot); err != nil {
 		return fmt.Errorf("chdir %s: %w", repoRoot, err)
+	}
+
+	// 0. sync kubeconfig so k3sc top/logs work from windows
+	if err := ensureKubeconfig(); err != nil {
+		return err
 	}
 
 	// 1. build windows binary
