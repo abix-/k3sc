@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/abix-/k3sc/internal/config"
@@ -342,18 +343,18 @@ func (r *DispatchReconciler) scan(ctx context.Context, disabledFamilies []string
 			break
 		}
 		agent := coretypes.AgentName(family, slot)
-		// build a synthetic issue for requeueTask
 		repo := dispatch.RepoFromString(group.Current.Spec.Repo)
 		issue := coretypes.Issue{
 			Number: group.Current.Spec.IssueNumber,
 			Repo:   repo,
 			State:  nextAction,
 		}
-		if err := r.requeueTask(ctx, group.Current, issue, slot, agent, string(family), group.FailureCount); err != nil {
-			olog("scheduler", "redispatch %s: %v", group.Current.Name, err)
+		name, err := r.createTask(ctx, issue, slot, agent, string(family), group.FailureCount)
+		if err != nil {
+			olog("scheduler", "redispatch %s#%d: %v", issue.Repo.Name, issue.Number, err)
 			continue
 		}
-		olog("scheduler", "redispatch %s -> %s (slot %d, %s)", group.Current.Name, nextAction, slot, agent)
+		olog("scheduler", "redispatch %s -> %s (slot %d, %s)", name, nextAction, slot, agent)
 		usedSlots = append(usedSlots, slot)
 		group.Active = &AgentJob{Spec: AgentJobSpec{Slot: slot, Agent: agent}}
 		result.hadWork = true
@@ -396,20 +397,16 @@ func (r *DispatchReconciler) scan(ctx context.Context, disabledFamilies []string
 			break
 		}
 		agent := coretypes.AgentName(family, slot)
-		if group != nil && group.Current != nil {
-			if err := r.requeueTask(ctx, group.Current, issue, slot, agent, string(family), group.FailureCount); err != nil {
-				olog("scheduler", "requeue %s: %v", group.Current.Name, err)
-				continue
-			}
-			olog("scheduler", "requeued %s (slot %d, %s)", group.Current.Name, slot, agent)
-		} else {
-			name, err := r.createTask(ctx, issue, slot, agent, string(family))
-			if err != nil {
-				olog("scheduler", "create %s#%d: %v", issue.Repo.Name, issue.Number, err)
-				continue
-			}
-			olog("scheduler", "created %s (slot %d, %s)", name, slot, agent)
+		failureCount := 0
+		if group != nil {
+			failureCount = group.FailureCount
 		}
+		name, err := r.createTask(ctx, issue, slot, agent, string(family), failureCount)
+		if err != nil {
+			olog("scheduler", "create %s#%d: %v", issue.Repo.Name, issue.Number, err)
+			continue
+		}
+		olog("scheduler", "created %s (slot %d, %s)", name, slot, agent)
 
 		usedSlots = append(usedSlots, slot)
 		if group == nil {
@@ -460,20 +457,16 @@ func (r *DispatchReconciler) scan(ctx context.Context, disabledFamilies []string
 			continue
 		}
 
-		if group != nil && group.Current != nil {
-			if err := r.requeueTask(ctx, group.Current, issue, slot, agent, string(family), group.FailureCount); err != nil {
-				olog("scheduler", "requeue review %s: %v", group.Current.Name, err)
-				continue
-			}
-			olog("scheduler", "requeued review %s (slot %d, %s)", group.Current.Name, slot, agent)
-		} else {
-			name, err := r.createTask(ctx, issue, slot, agent, string(family))
-			if err != nil {
-				olog("scheduler", "create review %s#%d: %v", issue.Repo.Name, issue.Number, err)
-				continue
-			}
-			olog("scheduler", "created review %s (slot %d, %s)", name, slot, agent)
+		failureCount := 0
+		if group != nil {
+			failureCount = group.FailureCount
 		}
+		name, err := r.createTask(ctx, issue, slot, agent, string(family), failureCount)
+		if err != nil {
+			olog("scheduler", "create review %s#%d: %v", issue.Repo.Name, issue.Number, err)
+			continue
+		}
+		olog("scheduler", "created review %s (slot %d, %s)", name, slot, agent)
 
 		usedSlots = append(usedSlots, slot)
 		if group == nil {
@@ -604,17 +597,7 @@ func preferTask(candidate, current *AgentJob) bool {
 		return candidateActive
 	}
 
-	candidateCanonical := isCanonicalTask(candidate)
-	currentCanonical := isCanonicalTask(current)
-	if candidateCanonical != currentCanonical {
-		return candidateCanonical
-	}
-
 	return candidate.CreationTimestamp.After(current.CreationTimestamp.Time)
-}
-
-func isCanonicalTask(task *AgentJob) bool {
-	return task != nil && task.Name == canonicalTaskName(task.Spec.Repo, task.Spec.IssueNumber)
 }
 
 func fullRepo(repo coretypes.Repo) string {
@@ -625,7 +608,9 @@ func issueKey(repo string, issue int) string {
 	return strings.ToLower(fmt.Sprintf("%s#%d", repo, issue))
 }
 
-func canonicalTaskName(repo string, issue int) string {
+var attemptCounter uint32
+
+func attemptTaskName(repo string, issue int) string {
 	parts := strings.SplitN(repo, "/", 2)
 	owner := ""
 	name := repo
@@ -633,7 +618,9 @@ func canonicalTaskName(repo string, issue int) string {
 		owner = parts[0]
 		name = parts[1]
 	}
-	return fmt.Sprintf("%s-%s-%d", sanitizeName(owner), sanitizeName(name), issue)
+	ts := time.Now().Unix()
+	seq := atomic.AddUint32(&attemptCounter, 1)
+	return fmt.Sprintf("%s-%d-%s-%d-%d", sanitizeName(name), issue, sanitizeName(owner), ts, seq)
 }
 
 func sanitizeName(s string) string {
@@ -655,7 +642,7 @@ func sanitizeName(s string) string {
 	return strings.Trim(b.String(), "-")
 }
 
-func (r *DispatchReconciler) createTask(ctx context.Context, issue coretypes.Issue, slot int, agent, family string) (string, error) {
+func (r *DispatchReconciler) createTask(ctx context.Context, issue coretypes.Issue, slot int, agent, family string, failureCount int) (string, error) {
 	// look up PR number for review jobs
 	var prNumber int
 	if issue.State == "needs-review" {
@@ -670,7 +657,7 @@ func (r *DispatchReconciler) createTask(ctx context.Context, issue coretypes.Iss
 			Kind:       "AgentJob",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      canonicalTaskName(fullRepo(issue.Repo), issue.Number),
+			Name:      attemptTaskName(fullRepo(issue.Repo), issue.Number),
 			Namespace: r.Namespace,
 		},
 		Spec: AgentJobSpec{
@@ -684,60 +671,16 @@ func (r *DispatchReconciler) createTask(ctx context.Context, issue coretypes.Iss
 			Family:      family,
 			OriginState: issue.State,
 		},
+		Status: AgentJobStatus{
+			FailureCount: failureCount,
+		},
 	}
 	if err := r.Create(ctx, task); err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			return task.Name, nil
-		}
 		return "", err
 	}
 	return task.Name, nil
 }
 
-func (r *DispatchReconciler) requeueTask(ctx context.Context, task *AgentJob, issue coretypes.Issue, slot int, agent, family string, failureCount int) error {
-	key := client.ObjectKeyFromObject(task)
-	if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		latest := &AgentJob{}
-		if err := r.Get(ctx, key, latest); err != nil {
-			return err
-		}
-		latest.Spec.Repo = fullRepo(issue.Repo)
-		latest.Spec.RepoName = issue.Repo.Name
-		latest.Spec.IssueNumber = issue.Number
-		latest.Spec.RepoURL = issue.Repo.CloneURL()
-		latest.Spec.Slot = slot
-		latest.Spec.Agent = agent
-		latest.Spec.Family = family
-		latest.Spec.OriginState = issue.State
-		// look up PR number for review jobs
-		if issue.State == "needs-review" {
-			if pr, err := github.GetOpenPRNumber(ctx, issue.Repo, issue.Number); err == nil {
-				latest.Spec.PRNumber = pr
-			}
-		}
-		return r.Update(ctx, latest)
-	}); err != nil {
-		return err
-	}
-	return r.setTaskPending(ctx, key, failureCount)
-}
-
-func (r *DispatchReconciler) setTaskPending(ctx context.Context, key client.ObjectKey, failureCount int) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		latest := &AgentJob{}
-		if err := r.Get(ctx, key, latest); err != nil {
-			return err
-		}
-		if latest.Status.Phase == TaskPhasePending && latest.Status.FailureCount == failureCount {
-			return nil
-		}
-		latest.Status = AgentJobStatus{
-			Phase:        TaskPhasePending,
-			FailureCount: failureCount,
-		}
-		return r.Status().Update(ctx, latest)
-	})
-}
 
 func (r *DispatchReconciler) cleanupTerminalTasks(ctx context.Context, tasks []AgentJob) {
 	ttl := config.C.Scan.TaskTTL.Duration

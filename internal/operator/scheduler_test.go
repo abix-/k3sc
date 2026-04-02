@@ -34,15 +34,20 @@ func TestNextDispatchIntervalBackoffCapsAtMax(t *testing.T) {
 	}
 }
 
-func TestCanonicalTaskNameSanitizesRepo(t *testing.T) {
-	got := canonicalTaskName("Abix-/My_Repo", 42)
-	want := "abix-my-repo-42"
-	if got != want {
-		t.Fatalf("canonicalTaskName() = %q, want %q", got, want)
+func TestAttemptTaskNameFormat(t *testing.T) {
+	got := attemptTaskName("Abix-/My_Repo", 42)
+	// format: {repo}-{issue}-{owner}-{timestamp}
+	if len(got) == 0 {
+		t.Fatal("attemptTaskName() returned empty string")
+	}
+	// should start with "my-repo-42-abix-"
+	prefix := "my-repo-42-abix-"
+	if got[:len(prefix)] != prefix {
+		t.Fatalf("attemptTaskName() = %q, want prefix %q", got, prefix)
 	}
 }
 
-func TestPreferTaskPrefersActiveThenCanonicalThenNewest(t *testing.T) {
+func TestPreferTaskPrefersActiveThenNewest(t *testing.T) {
 	current := &AgentJob{
 		ObjectMeta: objectMetaAt(time.Now().Add(-time.Minute)),
 		Spec: AgentJobSpec{
@@ -63,24 +68,17 @@ func TestPreferTaskPrefersActiveThenCanonicalThenNewest(t *testing.T) {
 		t.Fatal("active task should win over terminal task")
 	}
 
+	// newer timestamp should win when both are terminal
 	current = &AgentJob{
-		ObjectMeta: objectMetaAt(time.Now()),
-		Spec: AgentJobSpec{
-			Repo:        "abix-/k3sc",
-			IssueNumber: 7,
-		},
-	}
-	current.Name = "legacy-7-123"
-	candidate = &AgentJob{
 		ObjectMeta: objectMetaAt(time.Now().Add(-time.Minute)),
-		Spec: AgentJobSpec{
-			Repo:        "abix-/k3sc",
-			IssueNumber: 7,
-		},
+		Status:     AgentJobStatus{Phase: TaskPhaseSucceeded},
 	}
-	candidate.Name = canonicalTaskName("abix-/k3sc", 7)
+	candidate = &AgentJob{
+		ObjectMeta: objectMetaAt(time.Now()),
+		Status:     AgentJobStatus{Phase: TaskPhaseFailed},
+	}
 	if !preferTask(candidate, current) {
-		t.Fatal("canonical task should win over legacy name")
+		t.Fatal("newer task should win when both terminal")
 	}
 }
 
@@ -173,7 +171,7 @@ func TestSyncDispatchStatusUpdatesStatus(t *testing.T) {
 	}
 }
 
-func TestCreateAndRequeueTaskLifecycle(t *testing.T) {
+func TestCreateTaskCreatesNewCRD(t *testing.T) {
 	scheme := newOperatorTestScheme(t)
 	c := fake.NewClientBuilder().
 		WithScheme(scheme).
@@ -189,33 +187,51 @@ func TestCreateAndRequeueTaskLifecycle(t *testing.T) {
 		State:  "ready",
 	}
 
-	name, err := r.createTask(context.Background(), issue, 1, "claude-a", "claude")
+	name1, err := r.createTask(context.Background(), issue, 1, "claude-a", "claude", 0)
 	if err != nil {
 		t.Fatalf("createTask returned error: %v", err)
 	}
 
 	var created AgentJob
-	key := client.ObjectKey{Name: name, Namespace: "claude-agents"}
+	key := client.ObjectKey{Name: name1, Namespace: "claude-agents"}
 	if err := c.Get(context.Background(), key, &created); err != nil {
 		t.Fatalf("get created task: %v", err)
 	}
-	if created.Status.Phase != "" {
-		t.Fatalf("created status phase = %q, want empty", created.Status.Phase)
+	if created.Spec.Agent != "claude-a" || created.Spec.Slot != 1 {
+		t.Fatalf("created spec = %+v, want agent=claude-a slot=1", created.Spec)
+	}
+	if created.Status.FailureCount != 0 {
+		t.Fatalf("created failureCount = %d, want 0", created.Status.FailureCount)
 	}
 
-	if err := r.requeueTask(context.Background(), &created, issue, 2, "codex-b", "codex", 2); err != nil {
-		t.Fatalf("requeueTask returned error: %v", err)
+	// second attempt creates a new CRD with failure count carried forward
+	name2, err := r.createTask(context.Background(), issue, 2, "codex-b", "codex", 1)
+	if err != nil {
+		t.Fatalf("second createTask returned error: %v", err)
+	}
+	if name1 == name2 {
+		t.Fatal("second attempt should have a different CRD name")
 	}
 
-	var requeued AgentJob
-	if err := c.Get(context.Background(), key, &requeued); err != nil {
-		t.Fatalf("get requeued task: %v", err)
+	var second AgentJob
+	key2 := client.ObjectKey{Name: name2, Namespace: "claude-agents"}
+	if err := c.Get(context.Background(), key2, &second); err != nil {
+		t.Fatalf("get second task: %v", err)
 	}
-	if requeued.Spec.Slot != 2 || requeued.Spec.Agent != "codex-b" || requeued.Spec.Family != "codex" {
-		t.Fatalf("requeued spec = %+v, want slot=2 agent=codex-b family=codex", requeued.Spec)
+	if second.Spec.Agent != "codex-b" || second.Spec.Family != "codex" {
+		t.Fatalf("second spec = %+v, want agent=codex-b family=codex", second.Spec)
 	}
-	if requeued.Status.Phase != TaskPhasePending || requeued.Status.FailureCount != 2 {
-		t.Fatalf("requeued status = %+v, want phase Pending failureCount 2", requeued.Status)
+	if second.Status.FailureCount != 1 {
+		t.Fatalf("second failureCount = %d, want 1", second.Status.FailureCount)
+	}
+
+	// original CRD should be untouched
+	var original AgentJob
+	if err := c.Get(context.Background(), key, &original); err != nil {
+		t.Fatalf("get original task after second create: %v", err)
+	}
+	if original.Spec.Agent != "claude-a" {
+		t.Fatal("original CRD should be immutable after new attempt created")
 	}
 }
 
