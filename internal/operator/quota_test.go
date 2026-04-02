@@ -177,29 +177,6 @@ func TestBuildFamilyDispatchStatesMarksClaudeClearWhenFallbackSucceeds(t *testin
 	}
 }
 
-func TestPickAvailableFamilyHonorsAvailabilityAndRotation(t *testing.T) {
-	nextFamily = coretypes.FamilyClaude
-
-	family, ok := pickAvailableFamily(true, true)
-	if !ok || family != coretypes.FamilyClaude {
-		t.Fatalf("pickAvailableFamily(true, true) = %q, %v; want claude, true", family, ok)
-	}
-
-	family, ok = pickAvailableFamily(true, true)
-	if !ok || family != coretypes.FamilyCodex {
-		t.Fatalf("second pickAvailableFamily(true, true) = %q, %v; want codex, true", family, ok)
-	}
-
-	family, ok = pickAvailableFamily(false, true)
-	if !ok || family != coretypes.FamilyCodex {
-		t.Fatalf("pickAvailableFamily(false, true) = %q, %v; want codex, true", family, ok)
-	}
-
-	if _, ok := pickAvailableFamily(false, false); ok {
-		t.Fatal("pickAvailableFamily(false, false) should report no family")
-	}
-}
-
 type staticErr string
 
 func (e staticErr) Error() string { return string(e) }

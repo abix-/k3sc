@@ -19,33 +19,3 @@ func TestReviewLeaseExpired(t *testing.T) {
 		t.Fatal("future lease should not be expired")
 	}
 }
-
-func TestSameReviewReservations(t *testing.T) {
-	now := metav1.Now()
-	a := []DispatchReviewReservationStatus{{
-		Repo:        "abix-/endless",
-		RepoName:    "endless",
-		PRNumber:    194,
-		IssueNumber: 186,
-		Family:      "claude",
-		WorkerID:    "claude-a",
-		ReservedAt:  &now,
-	}}
-	b := []DispatchReviewReservationStatus{{
-		Repo:        "abix-/endless",
-		RepoName:    "endless",
-		PRNumber:    194,
-		IssueNumber: 186,
-		Family:      "claude",
-		WorkerID:    "claude-a",
-		ReservedAt:  &now,
-	}}
-	if !sameReviewReservations(a, b) {
-		t.Fatal("identical reservations should compare equal")
-	}
-
-	b[0].WorkerID = "codex-a"
-	if sameReviewReservations(a, b) {
-		t.Fatal("different reservations should not compare equal")
-	}
-}

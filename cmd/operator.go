@@ -16,7 +16,6 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
-	crclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
@@ -97,12 +96,6 @@ func runOperator(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("load template: %w", err)
 	}
 
-	timberbotTemplate, err := dispatch.LoadTimberbotTemplate()
-	if err != nil {
-		fmt.Printf("[operator] timberbot template not found, timberbot dispatch disabled: %v\n", err)
-		timberbotTemplate = ""
-	}
-
 	reconciler := &operator.Reconciler{
 		Client:   mgr.GetClient(),
 		K8s:      cs,
@@ -112,25 +105,7 @@ func runOperator(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("setup controller: %w", err)
 	}
 
-	dispatcher := &operator.DispatchReconciler{
-		Client:            mgr.GetClient(),
-		APIReader:         mgr.GetAPIReader(),
-		K8s:               cs,
-		Namespace:         types.Namespace,
-		TimberbotTemplate: timberbotTemplate,
-	}
-	if err := dispatcher.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("setup scheduler: %w", err)
-	}
-
 	ctx := ctrl.SetupSignalHandler()
-	bootstrap, err := crclient.New(ctrl.GetConfigOrDie(), crclient.Options{Scheme: scheme})
-	if err != nil {
-		return fmt.Errorf("bootstrap client: %w", err)
-	}
-	if err := operator.EnsureDispatchState(ctx, bootstrap, types.Namespace); err != nil {
-		return fmt.Errorf("ensure dispatch state: %w", err)
-	}
 
 	fmt.Println("[operator] starting")
 	return mgr.Start(ctx)

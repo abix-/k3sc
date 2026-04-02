@@ -72,6 +72,61 @@ var reviewLeaseGVR = schema.GroupVersionResource{
 	Resource: "reviewleases",
 }
 
+// CreateAgentJob creates a new AgentJob CRD via the dynamic client.
+// Used by the dispatch CLI command to create work items for the operator.
+func CreateAgentJob(ctx context.Context, issue types.Issue) (string, error) {
+	cfg, err := getConfig()
+	if err != nil {
+		return "", err
+	}
+	dc, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return "", fmt.Errorf("dynamic client: %w", err)
+	}
+
+	name := fmt.Sprintf("%s-%d-%s-%d",
+		sanitizeK8sName(issue.Repo.Name),
+		issue.Number,
+		sanitizeK8sName(issue.Repo.Owner),
+		time.Now().Unix())
+
+	obj := &unstructured.Unstructured{
+		Object: map[string]any{
+			"apiVersion": "k3sc.abix.dev/v1",
+			"kind":       "AgentJob",
+			"metadata": map[string]any{
+				"name":      name,
+				"namespace": types.Namespace,
+			},
+			"spec": map[string]any{
+				"repo":        issue.Repo.Owner + "/" + issue.Repo.Name,
+				"repoName":    issue.Repo.Name,
+				"issueNumber": int64(issue.Number),
+				"repoURL":     issue.Repo.CloneURL(),
+				"originState": issue.State,
+			},
+		},
+	}
+
+	if _, err := dc.Resource(agentJobGVR).Namespace(types.Namespace).Create(ctx, obj, metav1.CreateOptions{}); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
+func sanitizeK8sName(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
 // GetAgentJobs fetches AgentJob CRs and returns TUI-friendly TaskInfo structs.
 func GetAgentJobs(ctx context.Context) ([]types.TaskInfo, error) {
 	cfg, err := getConfig()
@@ -312,55 +367,10 @@ func DeleteAgentJobsForIssue(ctx context.Context, repoName string, issue int) (i
 	return deleted, nil
 }
 
+// TriggerDispatch is a no-op retained for backward compatibility.
+// Dispatch is now handled by `k3sc dispatch` which scans GitHub and creates AgentJob CRDs.
 func TriggerDispatch(ctx context.Context) (string, error) {
-	cfg, err := getConfig()
-	if err != nil {
-		return "", err
-	}
-	dc, err := dynamic.NewForConfig(cfg)
-	if err != nil {
-		return "", fmt.Errorf("dynamic client: %w", err)
-	}
-
-	resource := dc.Resource(dispatchStateGVR).Namespace(types.Namespace)
-	state, err := resource.Get(ctx, types.DispatchStateName, metav1.GetOptions{})
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return "", fmt.Errorf("get dispatch state: %w", err)
-		}
-		state = &unstructured.Unstructured{
-			Object: map[string]any{
-				"apiVersion": "k3sc.abix.dev/v1",
-				"kind":       "DispatchState",
-				"metadata": map[string]any{
-					"name":      types.DispatchStateName,
-					"namespace": types.Namespace,
-				},
-				"spec": map[string]any{
-					"triggerNonce": int64(1),
-				},
-			},
-		}
-		if _, err := resource.Create(ctx, state, metav1.CreateOptions{}); err != nil {
-			return "", fmt.Errorf("create dispatch state: %w", err)
-		}
-		return "dispatch state created and scan requested\n", nil
-	}
-
-	nonce, found, err := unstructured.NestedInt64(state.Object, "spec", "triggerNonce")
-	if err != nil {
-		return "", fmt.Errorf("read trigger nonce: %w", err)
-	}
-	if !found {
-		nonce = 0
-	}
-	if err := unstructured.SetNestedField(state.Object, nonce+1, "spec", "triggerNonce"); err != nil {
-		return "", fmt.Errorf("set trigger nonce: %w", err)
-	}
-	if _, err := resource.Update(ctx, state, metav1.UpdateOptions{}); err != nil {
-		return "", fmt.Errorf("update dispatch state: %w", err)
-	}
-	return fmt.Sprintf("scan requested (trigger %d)\n", nonce+1), nil
+	return "use 'k3sc dispatch' to scan and create jobs\n", nil
 }
 
 func GetDispatchState(ctx context.Context) (types.DispatchStateInfo, error) {

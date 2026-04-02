@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/abix-/k3sc/internal/claude"
+	"github.com/abix-/k3sc/internal/config"
 	"github.com/abix-/k3sc/internal/dispatch"
 	"github.com/abix-/k3sc/internal/github"
 	"github.com/abix-/k3sc/internal/k8s"
@@ -38,8 +39,6 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	switch task.Status.Phase {
 	case "", TaskPhasePending:
 		return r.handlePending(ctx, &task)
-	case TaskPhaseAssigned:
-		return r.handleAssigned(ctx, &task)
 	case TaskPhaseRunning:
 		return r.handleRunning(ctx, &task)
 	case TaskPhaseSucceeded:
@@ -121,31 +120,23 @@ func (r *Reconciler) handlePending(ctx context.Context, task *AgentJob) (ctrl.Re
 		agent = types.AgentName(f, slot)
 	}
 
-	task.Status.Phase = TaskPhaseAssigned
 	task.Status.Agent = agent
 	task.Status.Slot = slot
 	task.Status.Family = family
 
-	r.logf(ctx, task, "assigned %s slot %d", agent, slot)
-	return ctrl.Result{Requeue: true}, r.Status().Update(ctx, task)
-}
-
-func (r *Reconciler) handleAssigned(ctx context.Context, task *AgentJob) (ctrl.Result, error) {
+	// claim issue on github
 	repo := dispatch.RepoFromString(task.Spec.Repo)
-	task.Status.Agent = taskAgent(task)
-	task.Status.Slot = taskSlot(task)
-	task.Status.Family = taskFamily(task)
-
-	if err := github.ClaimIssue(ctx, repo, task.Spec.IssueNumber, task.Status.Agent); err != nil {
+	if err := github.ClaimIssue(ctx, repo, task.Spec.IssueNumber, agent); err != nil {
 		r.errf(ctx, err, task, "claim failed")
 		return ctrl.Result{RequeueAfter: RequeueDelay}, nil
 	}
 
+	// create k8s job
 	jobKind := "issue"
 	if task.Spec.OriginState == "needs-review" {
 		jobKind = "review"
 	}
-	jobName, err := k8s.CreateJobFromTemplate(ctx, r.K8s, r.Template, task.Spec.IssueNumber, task.Status.Slot, task.Spec.RepoURL, taskFamily(task), jobKind, task.Spec.PRNumber)
+	jobName, err := k8s.CreateJobFromTemplate(ctx, r.K8s, r.Template, task.Spec.IssueNumber, slot, task.Spec.RepoURL, family, jobKind, task.Spec.PRNumber)
 	if err != nil {
 		r.errf(ctx, err, task, "create job failed")
 		return ctrl.Result{RequeueAfter: RequeueDelay}, err
@@ -156,7 +147,7 @@ func (r *Reconciler) handleAssigned(ctx context.Context, task *AgentJob) (ctrl.R
 	task.Status.JobName = jobName
 	task.Status.StartedAt = &now
 
-	r.logf(ctx, task, "dispatched %s -> %s", task.Status.Agent, jobName)
+	r.logf(ctx, task, "dispatched %s -> %s (slot %d)", agent, jobName, slot)
 	return ctrl.Result{}, r.Status().Update(ctx, task)
 }
 
@@ -250,11 +241,58 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *AgentJob) (ctrl.
 
 	task.Status.Reported = true
 	r.logf(ctx, task, "%s (origin=%s) -> %s%s", status, task.Spec.OriginState, task.Status.NextAction, duration)
+
+	// auto-create follow-up CRD for actionable next states
+	nextAction := task.Status.NextAction
+	if (nextAction == "needs-review" || nextAction == "ready") && task.Status.FailureCount < MaxFailures {
+		issue := types.Issue{
+			Number: task.Spec.IssueNumber,
+			Repo:   repo,
+			State:  nextAction,
+		}
+		name, err := CreateTask(ctx, r.Client, issue, task.Status.FailureCount)
+		if err != nil {
+			r.errf(ctx, err, task, "follow-up create failed")
+		} else {
+			r.logf(ctx, task, "follow-up %s -> %s", nextAction, name)
+		}
+	}
+
 	if !succeeded && task.Status.FailureCount >= MaxFailures {
 		r.logf(ctx, task, "blocked after %d failures", task.Status.FailureCount)
 	}
 
+	// cleanup old terminal CRDs for this issue
+	r.cleanupOldAttempts(ctx, task)
+
 	return ctrl.Result{}, r.Status().Update(ctx, task)
+}
+
+// cleanupOldAttempts removes terminal CRDs for the same issue that are older than TTL.
+func (r *Reconciler) cleanupOldAttempts(ctx context.Context, current *AgentJob) {
+	ttl := config.C.Scan.TaskTTL.Duration
+	var tasks AgentJobList
+	if err := r.List(ctx, &tasks, client.InNamespace(current.Namespace)); err != nil {
+		return
+	}
+	for i := range tasks.Items {
+		t := &tasks.Items[i]
+		if t.Name == current.Name {
+			continue
+		}
+		if t.Spec.Repo != current.Spec.Repo || t.Spec.IssueNumber != current.Spec.IssueNumber {
+			continue
+		}
+		if !IsTerminal(t.Status.Phase) || !t.Status.Reported {
+			continue
+		}
+		if time.Since(t.CreationTimestamp.Time) <= ttl {
+			continue
+		}
+		if err := r.Delete(ctx, t); err == nil {
+			r.logf(ctx, current, "cleaned up old attempt %s", t.Name)
+		}
+	}
 }
 
 // getPodLogLines reads the tail of pod logs for a completed job.
