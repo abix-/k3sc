@@ -44,7 +44,7 @@ func CountPhases(pods []types.AgentPod) (running, completed, failed int) {
 }
 
 func repoLink(repo types.Repo, path string, number int) string {
-	url := fmt.Sprintf("https://github.com/%s/%s/%s/%d", repo.Owner, repo.Name, path, number)
+	url := fmt.Sprintf("%s/%s/%s/%s/%d", strings.TrimRight(types.GitHubURL, "/"), repo.Owner, repo.Name, path, number)
 	text := fmt.Sprintf("#%d", number)
 	link := fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, text)
 	if len(text) < 7 {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/abix-/k3sc/internal/config"
+	"github.com/abix-/k3sc/internal/types"
 	"github.com/spf13/cobra"
 )
 
@@ -31,7 +32,7 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 	}
 
 	base := config.C.LaunchDir
-	repoURL := "https://github.com/" + config.C.Repos[0].Owner + "/" + config.C.Repos[0].Name + ".git"
+	repoURL := strings.TrimRight(types.GitHubURL, "/") + "/" + config.C.Repos[0].Owner + "/" + config.C.Repos[0].Name + ".git"
 	prefix := agent + "-"
 
 	// find free slot: dir exists but no lockfile, or dir doesn't exist yet

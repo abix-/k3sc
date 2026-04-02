@@ -3,8 +3,10 @@ package cmd
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 
 	"github.com/abix-/k3sc/internal/github"
+	"github.com/abix-/k3sc/internal/types"
 	"github.com/spf13/cobra"
 )
 
@@ -47,7 +49,7 @@ func runNext(cmd *cobra.Command, args []string) error {
 				repo:  i.Repo.Name,
 				num:   i.Number,
 				title: i.Title,
-				url:   fmt.Sprintf("https://github.com/%s/%s/issues/%d", i.Repo.Owner, i.Repo.Name, i.Number),
+				url:   fmt.Sprintf("%s/%s/%s/issues/%d", strings.TrimRight(types.GitHubURL, "/"), i.Repo.Owner, i.Repo.Name, i.Number),
 			})
 		}
 	}
@@ -57,7 +59,7 @@ func runNext(cmd *cobra.Command, args []string) error {
 			repo:  pr.Repo.Name,
 			num:   pr.Number,
 			title: pr.Title,
-			url:   fmt.Sprintf("https://github.com/%s/%s/pull/%d", pr.Repo.Owner, pr.Repo.Name, pr.Number),
+			url:   fmt.Sprintf("%s/%s/%s/pull/%d", strings.TrimRight(types.GitHubURL, "/"), pr.Repo.Owner, pr.Repo.Name, pr.Number),
 		})
 	}
 
