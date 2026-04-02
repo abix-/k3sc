@@ -130,21 +130,21 @@ spec:
             claimName: workspaces
         - name: codex-sessions
           hostPath:
-            path: /mnt/c/Users/Abix/.codex/sessions
+            path: /mnt/c/Users/aiannaco/.codex/sessions
             type: DirectoryOrCreate
         - name: claude-skills
           hostPath:
-            path: /mnt/c/Users/Abix/.claude/skills
+            path: /mnt/c/Users/aiannaco/.claude/skills
             type: Directory
         - name: claude-commands
           hostPath:
-            path: /mnt/c/Users/Abix/.claude/commands
+            path: /mnt/c/Users/aiannaco/.claude/commands
             type: Directory
         - name: claude-docs
           hostPath:
-            path: /mnt/c/Users/Abix/.claude/docs
+            path: /mnt/c/Users/aiannaco/.claude/docs
             type: Directory
         - name: claude-md
           hostPath:
-            path: /mnt/c/Users/Abix/.claude/CLAUDE.md
+            path: /mnt/c/Users/aiannaco/.claude/CLAUDE.md
             type: File

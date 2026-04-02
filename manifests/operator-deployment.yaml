@@ -37,5 +37,5 @@ spec:
             name: dispatcher-scripts
         - name: codex-sessions
           hostPath:
-            path: /mnt/c/Users/Abix/.codex/sessions
+            path: /mnt/c/Users/aiannaco/.codex/sessions
             type: DirectoryOrCreate
