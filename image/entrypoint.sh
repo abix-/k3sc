@@ -13,18 +13,16 @@ WORKSPACE="/workspaces/${REPO_NAME}-${AGENT_ID}"
 
 JOB_KIND="${JOB_KIND:-issue}"
 
-# skip cargo setup for non-code jobs
-if [ "$JOB_KIND" != "timberbot" ]; then
+# cargo setup: only if rust toolchain is present in the image
+if [ "$JOB_KIND" != "timberbot" ] && [ -d "/usr/local/cargo/bin" ]; then
     export CARGO_TARGET_DIR="/cargo-target"
     export CARGO_HOME="/cargo-home"
-    # seed cargo-home from image if empty (first run)
     if [ ! -f "${CARGO_HOME}/bin/cargo" ]; then
         echo "[entrypoint] seeding CARGO_HOME from image..."
         cp -a /usr/local/cargo/bin "${CARGO_HOME}/"
         cp -a /usr/local/cargo/env* "${CARGO_HOME}/" 2>/dev/null || true
         mkdir -p "${CARGO_HOME}/registry" "${CARGO_HOME}/git"
     fi
-    # seed rustup settings
     if [ ! -d "${HOME}/.rustup" ]; then
         ln -sf /usr/local/rustup "${HOME}/.rustup"
     fi
@@ -37,8 +35,48 @@ if [ ! -d "${HOME}/.codex" ] || [ ! -w "${HOME}/.codex" ]; then
     exit 1
 fi
 
+# install gh CLI wrapper from SAFETY_GH_ALLOWED config
+# format: "auth:status issue:view,list,edit pr:create,view,list,diff,checks"
+# wrapper goes to /opt/gh-wrapper/gh (owned by claude, prepended to PATH)
+{
+    cat << 'GHWRAPPER_HEAD'
+#!/bin/bash
+CMD="${1:-}"
+SUB="${2:-}"
+case "$CMD" in
+GHWRAPPER_HEAD
+    for rule in ${SAFETY_GH_ALLOWED}; do
+        cmd="${rule%%:*}"
+        subs="${rule#*:}"
+        # convert comma-separated subs to pipe-separated for case pattern
+        pattern=$(echo "$subs" | sed 's/,/|/g')
+        cat << GHWRAPPER_RULE
+    ${cmd})
+        case "\$SUB" in
+            ${pattern}) exec /usr/bin/gh "\$@" ;;
+            *) echo "ERROR: gh ${cmd} \$SUB is not allowed. Permitted: ${subs}" >&2; exit 1 ;;
+        esac
+        ;;
+GHWRAPPER_RULE
+    done
+    cat << 'GHWRAPPER_TAIL'
+    *)
+        echo "ERROR: gh $CMD is not allowed." >&2
+        exit 1
+        ;;
+esac
+GHWRAPPER_TAIL
+} > /opt/gh-wrapper/gh
+chmod +x /opt/gh-wrapper/gh
+export PATH="/opt/gh-wrapper:${PATH}"
+
 # trust all workspaces (PVC may have been created by different uid)
 git config --global --add safe.directory '*'
+
+# configure git to use token for HTTPS auth (credential helper reads env at runtime)
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+    git config --global credential.helper '!f() { echo "username=x-access-token"; echo "password=${GH_TOKEN:-${GITHUB_TOKEN}}"; }; f'
+fi
 
 echo "[entrypoint] agent=${AGENT_ID} repo=${REPO_NAME} issue=${ISSUE_NUMBER}"
 
@@ -47,16 +85,62 @@ if [ ! -d "${WORKSPACE}/.git" ]; then
     echo "[entrypoint] cloning repo into ${WORKSPACE}..."
     git clone "${REPO_URL}" "${WORKSPACE}"
 else
-    # fix ownership if workspace was created by a different user (e.g. root)
-    if [ ! -w "${WORKSPACE}/.git" ]; then
-        echo "[entrypoint] fixing workspace ownership..."
-        sudo chown -R "$(id -u):$(id -g)" "${WORKSPACE}" 2>/dev/null || true
-    fi
+    # workspace ownership is handled by pod securityContext.fsGroup
     echo "[entrypoint] workspace exists, fetching..."
     git -C "${WORKSPACE}" fetch origin
 fi
 
 cd "${WORKSPACE}"
+
+# safety config from env (set by job template from k3sc config)
+SAFETY_BRANCH_PATTERN="${SAFETY_BRANCH_PATTERN:-issue-{N}}"
+SAFETY_GH_ALLOWED="${SAFETY_GH_ALLOWED:-auth:status issue:view,list,edit pr:create,view,list,diff,checks repo:view,list,clone}"
+SAFETY_BLOCKED_COMMIT_WORDS="${SAFETY_BLOCKED_COMMIT_WORDS:-fixes,closes,resolves}"
+
+# branch setup: ensure agent starts on the correct branch (not main)
+if [ "$JOB_KIND" = "issue" ] || [ "$JOB_KIND" = "review" ]; then
+    BRANCH=$(echo "${SAFETY_BRANCH_PATTERN}" | sed "s/{N}/${ISSUE_NUMBER}/g")
+    if git ls-remote --heads origin "${BRANCH}" | grep -q "${BRANCH}"; then
+        echo "[entrypoint] checking out existing branch ${BRANCH}"
+        git checkout "${BRANCH}" 2>/dev/null || git checkout -b "${BRANCH}" "origin/${BRANCH}"
+        git pull --rebase origin main 2>/dev/null || true
+    else
+        echo "[entrypoint] creating branch ${BRANCH} from origin/main"
+        git fetch origin
+        git checkout -b "${BRANCH}" origin/main
+    fi
+    echo "[entrypoint] on branch: $(git branch --show-current)"
+fi
+
+# install pre-push hook: only allow pushing to the configured branch
+mkdir -p "${WORKSPACE}/.git/hooks"
+ALLOWED_BRANCH=$(echo "${SAFETY_BRANCH_PATTERN}" | sed "s/{N}/${ISSUE_NUMBER}/g")
+cat > "${WORKSPACE}/.git/hooks/pre-push" << HOOK
+#!/bin/bash
+ALLOWED_BRANCH="${ALLOWED_BRANCH}"
+while read local_ref local_sha remote_ref remote_sha; do
+    branch=\$(echo "\$remote_ref" | sed 's|refs/heads/||')
+    if [ "\$branch" != "\$ALLOWED_BRANCH" ]; then
+        echo "ERROR: push to '\$branch' blocked. Only '\$ALLOWED_BRANCH' is allowed."
+        exit 1
+    fi
+done
+exit 0
+HOOK
+chmod +x "${WORKSPACE}/.git/hooks/pre-push"
+
+# install commit-msg hook: block configured keywords
+BLOCKED_PATTERN=$(echo "${SAFETY_BLOCKED_COMMIT_WORDS}" | sed 's/,/|/g')
+cat > "${WORKSPACE}/.git/hooks/commit-msg" << HOOK
+#!/bin/bash
+if grep -qiE "(${BLOCKED_PATTERN})\s+#[0-9]+" "\$1"; then
+    echo "ERROR: commit messages must not use ${SAFETY_BLOCKED_COMMIT_WORDS} #N (auto-closes issues)."
+    echo "Use 'ref #N' or 'for #N' instead."
+    exit 1
+fi
+exit 0
+HOOK
+chmod +x "${WORKSPACE}/.git/hooks/commit-msg"
 
 # configure git identity for this agent
 git config user.name "${AGENT_ID}"
@@ -78,8 +162,17 @@ if [ "$JOB_KIND" != "timberbot" ]; then
         echo "[entrypoint] ERROR: GITHUB_TOKEN env var is required"
         exit 1
     fi
+    # detect GHE host from REPO_URL and configure gh CLI
+    REPO_HOST=$(echo "${REPO_URL}" | sed -n 's|https://\([^/]*\)/.*|\1|p')
+    if [ -n "${REPO_HOST}" ] && [ "${REPO_HOST}" != "github.com" ]; then
+        export GH_ENTERPRISE_TOKEN="${GITHUB_TOKEN}"
+        export GH_HOST="${REPO_HOST}"
+        export GH_TOKEN="${GITHUB_TOKEN}"
+        unset GITHUB_TOKEN
+        echo "[entrypoint] GHE host: ${REPO_HOST}"
+    fi
     echo "[entrypoint] verifying gh auth..."
-    gh auth status 2>&1 || true
+    gh auth status --hostname "${REPO_HOST:-github.com}" 2>&1 || true
 fi
 
 AGENT_FAMILY="${AGENT_FAMILY:-claude}"
@@ -160,6 +253,7 @@ ${SKILL_PROMPT}" \
     EXIT_CODE=${PIPESTATUS[0]}
 fi
 
+echo ""
 # collect usage stats from claude's JSONL files
 collect_usage() {
     local claude_dir="${HOME}/.claude"
@@ -169,7 +263,7 @@ collect_usage() {
     fi
     # find all .jsonl usage files, parse with jq, sum token counts
     find "$projects_dir" -name '*.jsonl' -type f 2>/dev/null | while IFS= read -r f; do cat "$f"; done | \
-        jq -s '
+        jq -sc '
             [.[] | select(.message != null and .message.usage != null)] |
             {
                 input_tokens: (map(.message.usage.input_tokens // 0) | add // 0),

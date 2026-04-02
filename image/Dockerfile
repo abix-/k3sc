@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # system deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates git jq iproute2 sudo && \
+    curl ca-certificates git jq iproute2 && \
     rm -rf /var/lib/apt/lists/*
 
 # node.js 22 LTS
@@ -38,9 +38,8 @@ RUN chmod +x /entrypoint.sh
 
 # non-root user (claude refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash claude && \
-    echo "claude ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/claude && \
-    mkdir -p /workspaces /home/claude/.codex/sessions && \
-    chown -R claude:claude /workspaces /home/claude/.codex
+    mkdir -p /workspaces /home/claude/.codex/sessions /opt/gh-wrapper && \
+    chown -R claude:claude /workspaces /home/claude/.codex /opt/gh-wrapper
 COPY --chown=claude:claude claude-config/ /home/claude/.claude/
 
 USER claude
