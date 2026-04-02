@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/abix-/k3sc/internal/format"
+	"github.com/abix-/k3sc/internal/operator"
 	"github.com/abix-/k3sc/internal/types"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -30,6 +31,7 @@ type Data struct {
 	PRs         []types.PullRequest
 	OperatorLog string
 	LiveLogs    []LiveLog
+	Costs       []operator.CostEntry
 }
 
 type GatherFunc func() (*Data, error)
@@ -475,6 +477,87 @@ func (m Model) renderView(maxVisibleTasks int) string {
 	sections = append(sections, sep)
 	sections = append(sections, titleFg.Render(taskTitle))
 	sections = append(sections, strings.Join(taskLines, "\n"))
+
+	// -- costs --
+	var costLines []string
+	if len(d.Costs) == 0 {
+		costLines = append(costLines, dim.Render("  (no cost data)"))
+	} else {
+		now := time.Now()
+		todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		weekStart := todayStart.AddDate(0, 0, -int(now.Weekday()))
+
+		type costBucket struct {
+			jobs   int
+			cost   float64
+			tokens int64
+		}
+		var today, week, all costBucket
+		models := map[string]*costBucket{}
+
+		for _, e := range d.Costs {
+			all.jobs++
+			all.cost += e.CostUSD
+			all.tokens += e.Total
+			if e.Timestamp.After(todayStart) {
+				today.jobs++
+				today.cost += e.CostUSD
+				today.tokens += e.Total
+			}
+			if e.Timestamp.After(weekStart) {
+				week.jobs++
+				week.cost += e.CostUSD
+				week.tokens += e.Total
+			}
+			m := e.Model
+			if m == "" {
+				m = "unknown"
+			}
+			if models[m] == nil {
+				models[m] = &costBucket{}
+			}
+			models[m].jobs++
+			models[m].cost += e.CostUSD
+			models[m].tokens += e.Total
+		}
+
+		fmtTok := func(n int64) string {
+			switch {
+			case n >= 1_000_000:
+				return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+			case n >= 1_000:
+				return fmt.Sprintf("%.0fk", float64(n)/1_000)
+			default:
+				return fmt.Sprintf("%d", n)
+			}
+		}
+		fmtBucket := func(label string, b costBucket) string {
+			avg := 0.0
+			if b.jobs > 0 {
+				avg = b.cost / float64(b.jobs)
+			}
+			return fmt.Sprintf("  %-12s %3d jobs   $%7.2f   %8s tokens   avg $%.2f/job", label, b.jobs, b.cost, fmtTok(b.tokens), avg)
+		}
+
+		avg := 0.0
+		if all.jobs > 0 {
+			avg = all.cost / float64(all.jobs)
+		}
+		costLines = append(costLines, green.Render(fmt.Sprintf("  Jobs: %d | Total: $%.2f | Avg: $%.2f/job | Tokens: %s", all.jobs, all.cost, avg, fmtTok(all.tokens))))
+		costLines = append(costLines, yellow.Render(fmtBucket("Today", today)))
+		costLines = append(costLines, yellow.Render(fmtBucket("This week", week)))
+		costLines = append(costLines, dim.Render(fmtBucket("All time", all)))
+
+		if len(models) > 0 {
+			costLines = append(costLines, dim.Render("  By model:"))
+			for model, b := range models {
+				costLines = append(costLines, dim.Render(fmt.Sprintf("    %-24s %3d jobs   $%7.2f   %8s tokens", model, b.jobs, b.cost, fmtTok(b.tokens))))
+			}
+		}
+	}
+	sections = append(sections, sep)
+	sections = append(sections, titleFg.Render(" Costs"))
+	sections = append(sections, strings.Join(costLines, "\n"))
 
 	// -- pull requests --
 	var prLines []string

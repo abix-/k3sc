@@ -651,6 +651,43 @@ func calculateCostFromPricing(tokens *usageTokenPayload, pricing modelPricing) f
 		calculateTieredCost(cacheRead, pricing.CacheReadInputTokenCost, pricing.CacheReadInputTokenCostAbove200K)
 }
 
+// CalculateCostForTokens computes the USD cost for a given model and token counts.
+// Uses embedded pricing tables. Returns 0 if the model is unknown.
+func CalculateCostForTokens(model string, input, output, cacheCreate, cacheRead int64) float64 {
+	pricing, ok := embeddedPricing[model]
+	if !ok {
+		// try prefix match (e.g. "claude-sonnet-4-6-20250514" -> "claude-sonnet-4-6")
+		for key, p := range embeddedPricing {
+			if len(model) > len(key) && model[:len(key)] == key {
+				pricing = p
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return 0
+		}
+	}
+
+	const tieredThreshold = 200_000
+	tiered := func(total int64, base, above float64) float64 {
+		if total <= 0 {
+			return 0
+		}
+		if total > tieredThreshold && above > 0 {
+			below := minInt64(total, tieredThreshold)
+			over := maxInt64(total-tieredThreshold, 0)
+			return float64(below)*base + float64(over)*above
+		}
+		return float64(total) * base
+	}
+
+	return tiered(input, pricing.InputCostPerToken, pricing.InputCostPerTokenAbove200K) +
+		tiered(output, pricing.OutputCostPerToken, pricing.OutputCostPerTokenAbove200K) +
+		tiered(cacheCreate, pricing.CacheCreationInputTokenCost, pricing.CacheCreationInputTokenCostAbove200K) +
+		tiered(cacheRead, pricing.CacheReadInputTokenCost, pricing.CacheReadInputTokenCostAbove200K)
+}
+
 func findActiveBlock(blocks []sessionBlock) (*sessionBlock, error) {
 	for _, block := range blocks {
 		if block.IsActive && !block.IsGap {

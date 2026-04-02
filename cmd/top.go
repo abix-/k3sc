@@ -13,6 +13,7 @@ import (
 	"github.com/abix-/k3sc/internal/format"
 	"github.com/abix-/k3sc/internal/github"
 	"github.com/abix-/k3sc/internal/k8s"
+	"github.com/abix-/k3sc/internal/operator"
 	"github.com/abix-/k3sc/internal/tui"
 	"github.com/abix-/k3sc/internal/types"
 	tea "github.com/charmbracelet/bubbletea"
@@ -81,6 +82,7 @@ type dashboard struct {
 	issues      []types.Issue
 	prs         []types.PullRequest
 	operatorLog string
+	costs       []operator.CostEntry
 }
 
 func gather(cs *kubernetes.Clientset) (*dashboard, error) {
@@ -94,12 +96,13 @@ func gather(cs *kubernetes.Clientset) (*dashboard, error) {
 		issues                []types.Issue
 		prs                   []types.PullRequest
 		dispLog               string
+		costEntries           []operator.CostEntry
 		mu                    sync.Mutex
 		wg                    sync.WaitGroup
 		errs                  []error
 	)
 
-	wg.Add(7)
+	wg.Add(8)
 	go func() {
 		defer wg.Done()
 		n, v, e := k8s.GetNodeInfo(ctx, cs)
@@ -170,6 +173,13 @@ func gather(cs *kubernetes.Clientset) (*dashboard, error) {
 		}
 		mu.Unlock()
 	}()
+	go func() {
+		defer wg.Done()
+		c, _ := operator.ReadLedger()
+		mu.Lock()
+		costEntries = c
+		mu.Unlock()
+	}()
 	wg.Wait()
 
 	return &dashboard{
@@ -181,6 +191,7 @@ func gather(cs *kubernetes.Clientset) (*dashboard, error) {
 		issues:      issues,
 		prs:         prs,
 		operatorLog: dispLog,
+		costs:       costEntries,
 	}, nil
 }
 
@@ -328,6 +339,94 @@ func formatTokens(u *types.TaskUsage) string {
 	return fmt.Sprintf("%s c%.0f%% o%.0f%%", totalStr, u.CacheHitRate*100, u.OutputRatio*100)
 }
 
+func fmtTokensShort(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.0fk", float64(n)/1_000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+func printCosts(entries []operator.CostEntry) {
+	fmt.Println("=== COSTS ===")
+	if len(entries) == 0 {
+		fmt.Println("  (no cost data)")
+		fmt.Println()
+		return
+	}
+
+	now := time.Now()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	weekStart := todayStart.AddDate(0, 0, -int(now.Weekday()))
+
+	type bucket struct {
+		jobs   int
+		cost   float64
+		tokens int64
+	}
+	var today, week, all bucket
+	models := map[string]*bucket{}
+
+	for _, e := range entries {
+		all.jobs++
+		all.cost += e.CostUSD
+		all.tokens += e.Total
+
+		if e.Timestamp.After(todayStart) {
+			today.jobs++
+			today.cost += e.CostUSD
+			today.tokens += e.Total
+		}
+		if e.Timestamp.After(weekStart) {
+			week.jobs++
+			week.cost += e.CostUSD
+			week.tokens += e.Total
+		}
+
+		m := e.Model
+		if m == "" {
+			m = "unknown"
+		}
+		if models[m] == nil {
+			models[m] = &bucket{}
+		}
+		models[m].jobs++
+		models[m].cost += e.CostUSD
+		models[m].tokens += e.Total
+	}
+
+	avg := 0.0
+	if all.jobs > 0 {
+		avg = all.cost / float64(all.jobs)
+	}
+	fmt.Printf("  Jobs: %d | Total: $%.2f | Avg: $%.2f/job | Tokens: %s\n\n",
+		all.jobs, all.cost, avg, fmtTokensShort(all.tokens))
+
+	printBucket := func(label string, b bucket) {
+		a := 0.0
+		if b.jobs > 0 {
+			a = b.cost / float64(b.jobs)
+		}
+		fmt.Printf("  %-12s %3d jobs   $%7.2f   %8s tokens   avg $%.2f/job\n",
+			label, b.jobs, b.cost, fmtTokensShort(b.tokens), a)
+	}
+	printBucket("Today", today)
+	printBucket("This week", week)
+	printBucket("All time", all)
+
+	if len(models) > 0 {
+		fmt.Printf("\n  By model:\n")
+		for model, b := range models {
+			fmt.Printf("    %-24s %3d jobs   $%7.2f   %8s tokens\n",
+				model, b.jobs, b.cost, fmtTokensShort(b.tokens))
+		}
+	}
+	fmt.Println()
+}
+
 func runtimeLabel(phase types.PodPhase) string {
 	if phase == "" {
 		return "-"
@@ -397,7 +496,10 @@ func printDashboard(d *dashboard) {
 	}
 	fmt.Println()
 
-	// 4. Issues
+	// 4. Costs
+	printCosts(d.costs)
+
+	// 5. Issues
 	fmt.Println("=== GITHUB ISSUES ===")
 	if len(d.issues) == 0 {
 		fmt.Println("  (no issues with workflow labels)")
@@ -493,6 +595,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 			PRs:         d.prs,
 			OperatorLog: d.operatorLog,
 			LiveLogs:    liveLogs,
+			Costs:       d.costs,
 		}, nil
 	}
 
@@ -500,13 +603,14 @@ func runTop(cmd *cobra.Command, args []string) error {
 		ctx := context.Background()
 
 		var (
-			dispatch types.DispatchStateInfo
-			pods     []types.AgentPod
-			dispLog  string
-			wg2      sync.WaitGroup
-			mu2      sync.Mutex
+			dispatch    types.DispatchStateInfo
+			pods        []types.AgentPod
+			dispLog     string
+			costEntries []operator.CostEntry
+			wg2         sync.WaitGroup
+			mu2         sync.Mutex
 		)
-		wg2.Add(3)
+		wg2.Add(4)
 		go func() {
 			defer wg2.Done()
 			s, _ := k8s.GetDispatchState(ctx)
@@ -528,6 +632,13 @@ func runTop(cmd *cobra.Command, args []string) error {
 			dispLog = d
 			mu2.Unlock()
 		}()
+		go func() {
+			defer wg2.Done()
+			c, _ := operator.ReadLedger()
+			mu2.Lock()
+			costEntries = c
+			mu2.Unlock()
+		}()
 		wg2.Wait()
 
 		// sync streaming logs
@@ -547,6 +658,7 @@ func runTop(cmd *cobra.Command, args []string) error {
 			PRs:         current.PRs,
 			OperatorLog: dispLog,
 			LiveLogs:    liveLogs,
+			Costs:       costEntries,
 		}, nil
 	}
 
