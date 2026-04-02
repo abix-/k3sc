@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abix-/k3sc/internal/claude"
 	"github.com/abix-/k3sc/internal/dispatch"
 	"github.com/abix-/k3sc/internal/github"
 	"github.com/abix-/k3sc/internal/k8s"
@@ -189,6 +190,7 @@ func (r *Reconciler) handleRunning(ctx context.Context, task *AgentJob) (ctrl.Re
 		task.Status.Phase = TaskPhaseSucceeded
 		task.Status.FinishedAt = &now
 		task.Status.Usage = r.collectUsage(ctx, task)
+		r.recordCost(task, 0)
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
@@ -199,6 +201,7 @@ func (r *Reconciler) handleRunning(ctx context.Context, task *AgentJob) (ctrl.Re
 		task.Status.LastError = "pod failed"
 		task.Status.FailureCount++
 		task.Status.Usage = r.collectUsage(ctx, task)
+		r.recordCost(task, 1)
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
@@ -289,10 +292,11 @@ type usageLogLine struct {
 func parseUsageFromLines(lines []string) *UsageStats {
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(lines[i])
-		if !strings.HasPrefix(line, usageLinePrefix) {
+		idx := strings.Index(line, usageLinePrefix)
+		if idx == -1 {
 			continue
 		}
-		jsonStr := line[len(usageLinePrefix):]
+		jsonStr := line[idx+len(usageLinePrefix):]
 		var raw usageLogLine
 		if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
 			continue
@@ -321,6 +325,47 @@ func isJobDead(job *batchv1.Job) bool {
 		}
 	}
 	return false
+}
+
+func (r *Reconciler) recordCost(task *AgentJob, exitCode int) {
+	usage := task.Status.Usage
+	if usage == nil || usage.TotalTokens == 0 {
+		return
+	}
+
+	model := ""
+	if len(usage.Models) > 0 {
+		model = usage.Models[0]
+	}
+
+	durationSec := 0
+	if task.Status.StartedAt != nil && task.Status.FinishedAt != nil {
+		durationSec = int(task.Status.FinishedAt.Sub(task.Status.StartedAt.Time).Seconds())
+	}
+
+	cost := claude.CalculateCostForTokens(model, usage.InputTokens, usage.OutputTokens, usage.CacheCreationTokens, usage.CacheReadTokens)
+
+	entry := CostEntry{
+		Timestamp:   time.Now().UTC(),
+		Repo:        task.Spec.Repo,
+		Issue:       task.Spec.IssueNumber,
+		Job:         task.Name,
+		Agent:       task.Spec.Agent,
+		Family:      task.Spec.Family,
+		Model:       model,
+		Input:       usage.InputTokens,
+		Output:      usage.OutputTokens,
+		CacheCreate: usage.CacheCreationTokens,
+		CacheRead:   usage.CacheReadTokens,
+		Total:       usage.TotalTokens,
+		CostUSD:     cost,
+		DurationSec: durationSec,
+		ExitCode:    exitCode,
+	}
+
+	if err := AppendCostEntry(entry); err != nil {
+		olog("costs", "ledger write failed: %v", err)
+	}
 }
 
 func (r *Reconciler) SetupWithManager(mgr ctrl.Manager) error {

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abix-/k3sc/internal/config"
 	"github.com/abix-/k3sc/internal/k8s"
 	coretypes "github.com/abix-/k3sc/internal/types"
 	"k8s.io/client-go/kubernetes"
@@ -84,12 +85,26 @@ func probeFamilyDispatchStates(ctx context.Context, cs *kubernetes.Clientset, lo
 	return states, warnings
 }
 
+func isFamilyEnabled(family coretypes.AgentFamily) bool {
+	if len(config.C.Families) == 0 {
+		return true // no config = all families enabled
+	}
+	for _, f := range config.C.Families {
+		if coretypes.AgentFamily(f) == family {
+			return true
+		}
+	}
+	return false
+}
+
 func runFamilyQuotaProbes(ctx context.Context) familyProbeResults {
 	var probes familyProbeResults
-	snap, err := probeCodexStatus(ctx)
-	probes.CodexErr = err
-	if snap != nil {
-		probes.Codex = snap
+	if isFamilyEnabled(coretypes.FamilyCodex) {
+		snap, err := probeCodexStatus(ctx)
+		probes.CodexErr = err
+		if snap != nil {
+			probes.Codex = snap
+		}
 	}
 	return probes
 }
@@ -119,6 +134,14 @@ func buildFamilyDispatchStates(now time.Time, lookback time.Duration, recentChec
 	}
 
 	for _, family := range []coretypes.AgentFamily{coretypes.FamilyClaude, coretypes.FamilyCodex} {
+		if !isFamilyEnabled(family) {
+			states[family] = familyDispatchState{
+				Available: false,
+				Checked:   true,
+				Reason:    "not in configured families",
+			}
+			continue
+		}
 		state := states[family]
 		if state.Checked {
 			continue

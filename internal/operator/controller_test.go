@@ -43,6 +43,20 @@ func TestParseUsageFromLines(t *testing.T) {
 	}
 }
 
+func TestParseUsageFromLines_InlineWithResult(t *testing.T) {
+	lines := []string{
+		`[result] exit[usage] {"input_tokens":100,"output_tokens":50,"cache_creation_tokens":0,"cache_read_tokens":0,"total_tokens":150,"cache_hit_rate":0,"output_ratio":0.333,"models":["claude-sonnet-4-6"],"entries":1}`,
+		"[entrypoint] claude exited with code 0",
+	}
+	stats := parseUsageFromLines(lines)
+	if stats == nil {
+		t.Fatal("expected usage stats from inline [usage], got nil")
+	}
+	if stats.TotalTokens != 150 {
+		t.Errorf("total_tokens: got %d, want 150", stats.TotalTokens)
+	}
+}
+
 func TestParseUsageFromLines_NoUsage(t *testing.T) {
 	lines := []string{
 		"[entrypoint] launching claude...",

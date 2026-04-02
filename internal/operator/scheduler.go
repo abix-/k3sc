@@ -295,7 +295,8 @@ func (r *DispatchReconciler) scan(ctx context.Context, disabledFamilies []string
 	claudeAvailable := familyStates[coretypes.FamilyClaude].Available
 	codexAvailable := familyStates[coretypes.FamilyCodex].Available
 	for _, family := range []coretypes.AgentFamily{coretypes.FamilyClaude, coretypes.FamilyCodex} {
-		if state := familyStates[family]; !state.Available {
+		state := familyStates[family]
+		if !state.Available && isFamilyEnabled(family) {
 			olog("scheduler", "%s dispatch blocked: %s", family, state.Reason)
 		}
 	}
