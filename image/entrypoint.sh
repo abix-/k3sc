@@ -160,5 +160,37 @@ ${SKILL_PROMPT}" \
     EXIT_CODE=${PIPESTATUS[0]}
 fi
 
+# collect usage stats from claude's JSONL files
+collect_usage() {
+    local claude_dir="${HOME}/.claude"
+    local projects_dir="${claude_dir}/projects"
+    if [ ! -d "$projects_dir" ]; then
+        return
+    fi
+    # find all .jsonl usage files, parse with jq, sum token counts
+    find "$projects_dir" -name '*.jsonl' -type f 2>/dev/null | while IFS= read -r f; do cat "$f"; done | \
+        jq -s '
+            [.[] | select(.message != null and .message.usage != null)] |
+            {
+                input_tokens: (map(.message.usage.input_tokens // 0) | add // 0),
+                output_tokens: (map(.message.usage.output_tokens // 0) | add // 0),
+                cache_creation_tokens: (map(.message.usage.cache_creation_input_tokens // 0) | add // 0),
+                cache_read_tokens: (map(.message.usage.cache_read_input_tokens // 0) | add // 0),
+                models: ([.[].message.model // empty] | unique),
+                entries: length
+            } |
+            .total_tokens = .input_tokens + .output_tokens + .cache_creation_tokens + .cache_read_tokens |
+            .total_input = .input_tokens + .cache_creation_tokens + .cache_read_tokens |
+            .cache_hit_rate = (if .total_input > 0 then ((.cache_read_tokens * 1000 / .total_input) | round / 1000) else 0 end) |
+            .output_ratio = (if .total_tokens > 0 then ((.output_tokens * 1000 / .total_tokens) | round / 1000) else 0 end)
+        ' 2>/dev/null | {
+            read -r usage_json
+            if [ -n "$usage_json" ]; then
+                echo "[usage] $usage_json"
+            fi
+        }
+}
+collect_usage
+
 echo "[entrypoint] ${AGENT_FAMILY} exited with code ${EXIT_CODE}"
 exit ${EXIT_CODE}

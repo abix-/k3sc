@@ -130,6 +130,20 @@ type TaskInfo struct {
 	Finished     *time.Time
 	RuntimePhase PodPhase
 	LogTail      string
+	Usage        *TaskUsage
+}
+
+// TaskUsage holds token usage stats for a completed agent job.
+type TaskUsage struct {
+	InputTokens         int64
+	OutputTokens        int64
+	CacheCreationTokens int64
+	CacheReadTokens     int64
+	TotalTokens         int64
+	CacheHitRate        float64 // cache_read / total_input
+	OutputRatio         float64 // output / total
+	Models              []string
+	Entries             int
 }
 
 type TimberbotInfo struct {

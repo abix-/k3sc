@@ -75,6 +75,20 @@ type AgentJobStatus struct {
 	NextAction   string       `json:"nextAction,omitempty"` // needs-review, needs-human
 	StartedAt    *metav1.Time `json:"startedAt,omitempty"`
 	FinishedAt   *metav1.Time `json:"finishedAt,omitempty"`
+	Usage        *UsageStats  `json:"usage,omitempty"`
+}
+
+// UsageStats holds token usage metrics collected from agent pod logs.
+type UsageStats struct {
+	InputTokens         int64    `json:"inputTokens,omitempty"`
+	OutputTokens        int64    `json:"outputTokens,omitempty"`
+	CacheCreationTokens int64    `json:"cacheCreationTokens,omitempty"`
+	CacheReadTokens     int64    `json:"cacheReadTokens,omitempty"`
+	TotalTokens         int64    `json:"totalTokens,omitempty"`
+	CacheHitRate        float64  `json:"cacheHitRate,omitempty"`  // cache_read / total_input
+	OutputRatio         float64  `json:"outputRatio,omitempty"`   // output / total
+	Models              []string `json:"models,omitempty"`
+	Entries             int      `json:"entries,omitempty"`
 }
 
 // AgentJobList contains a list of AgentJobs.

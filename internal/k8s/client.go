@@ -116,6 +116,43 @@ func GetAgentJobs(ctx context.Context) ([]types.TaskInfo, error) {
 			Slot:       int(slot),
 			NextAction: nextAction,
 		}
+
+		// read usage stats if present
+		usageMap, usageFound, _ := unstructured.NestedMap(item.Object, "status", "usage")
+		if usageFound && usageMap != nil {
+			t.Usage = &types.TaskUsage{}
+			if v, _, _ := unstructured.NestedInt64(usageMap, "inputTokens"); v > 0 {
+				t.Usage.InputTokens = v
+			}
+			if v, _, _ := unstructured.NestedInt64(usageMap, "outputTokens"); v > 0 {
+				t.Usage.OutputTokens = v
+			}
+			if v, _, _ := unstructured.NestedInt64(usageMap, "cacheCreationTokens"); v > 0 {
+				t.Usage.CacheCreationTokens = v
+			}
+			if v, _, _ := unstructured.NestedInt64(usageMap, "cacheReadTokens"); v > 0 {
+				t.Usage.CacheReadTokens = v
+			}
+			if v, _, _ := unstructured.NestedInt64(usageMap, "totalTokens"); v > 0 {
+				t.Usage.TotalTokens = v
+			}
+			if v, ok := usageMap["cacheHitRate"]; ok {
+				if f, ok := v.(float64); ok {
+					t.Usage.CacheHitRate = f
+				}
+			}
+			if v, ok := usageMap["outputRatio"]; ok {
+				if f, ok := v.(float64); ok {
+					t.Usage.OutputRatio = f
+				}
+			}
+			if v, _, _ := unstructured.NestedInt64(usageMap, "entries"); v > 0 {
+				t.Usage.Entries = int(v)
+			}
+			if models, _, _ := unstructured.NestedStringSlice(usageMap, "models"); len(models) > 0 {
+				t.Usage.Models = models
+			}
+		}
 		if startedAtRaw != "" {
 			if ts, err := time.Parse(time.RFC3339, startedAtRaw); err == nil {
 				t.Started = &ts

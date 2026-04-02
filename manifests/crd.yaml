@@ -62,6 +62,36 @@ spec:
                 finishedAt:
                   type: string
                   format: date-time
+                prNumber:
+                  type: integer
+                usage:
+                  type: object
+                  properties:
+                    inputTokens:
+                      type: integer
+                      format: int64
+                    outputTokens:
+                      type: integer
+                      format: int64
+                    cacheCreationTokens:
+                      type: integer
+                      format: int64
+                    cacheReadTokens:
+                      type: integer
+                      format: int64
+                    totalTokens:
+                      type: integer
+                      format: int64
+                    cacheHitRate:
+                      type: number
+                    outputRatio:
+                      type: number
+                    models:
+                      type: array
+                      items:
+                        type: string
+                    entries:
+                      type: integer
           required: [spec]
       subresources:
         status: {}

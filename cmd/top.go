@@ -310,6 +310,24 @@ func countTaskPhases(tasks []types.TaskInfo) (running, done, failed, blocked int
 	return running, done, failed, blocked
 }
 
+func formatTokens(u *types.TaskUsage) string {
+	if u == nil || u.TotalTokens == 0 {
+		return ""
+	}
+	total := u.TotalTokens
+	var totalStr string
+	switch {
+	case total >= 1_000_000:
+		totalStr = fmt.Sprintf("%.1fM", float64(total)/1_000_000)
+	case total >= 1_000:
+		totalStr = fmt.Sprintf("%.0fk", float64(total)/1_000)
+	default:
+		totalStr = fmt.Sprintf("%d", total)
+	}
+	// show: total tokens, cache hit rate, output ratio
+	return fmt.Sprintf("%s c%.0f%% o%.0f%%", totalStr, u.CacheHitRate*100, u.OutputRatio*100)
+}
+
 func runtimeLabel(phase types.PodPhase) string {
 	if phase == "" {
 		return "-"
@@ -397,9 +415,13 @@ func printDashboard(d *dashboard) {
 	if len(d.tasks) == 0 {
 		fmt.Println("  (no operator tasks)")
 	} else {
-		fmt.Printf("%-7s %-10s %-10s %-10s %-10s %-16s %-10s %-13s %s\n", "Issue", "Repo", "Agent", "Task", "Runtime", "Started", "Duration", "Next", "Last Output")
+		fmt.Printf("%-7s %-10s %-10s %-10s %-10s %-16s %-10s %-13s %-12s %s\n", "Issue", "Repo", "Agent", "Task", "Runtime", "Started", "Duration", "Next", "Tokens", "Last Output")
 		for _, task := range d.tasks {
-			fmt.Printf("%s %-10s %-10s %-10s %-10s %-16s %-10s %-13s %s\n",
+			tokens := ""
+			if task.Usage != nil && task.Usage.TotalTokens > 0 {
+				tokens = formatTokens(task.Usage)
+			}
+			fmt.Printf("%s %-10s %-10s %-10s %-10s %-16s %-10s %-13s %-12s %s\n",
 				format.IssueLink(task.Repo, task.Issue),
 				task.Repo.Name,
 				task.Agent,
@@ -408,6 +430,7 @@ func printDashboard(d *dashboard) {
 				format.FmtTime(task.Started),
 				format.FmtDuration(task.Started, task.Finished),
 				task.NextAction,
+				tokens,
 				task.LogTail)
 		}
 	}

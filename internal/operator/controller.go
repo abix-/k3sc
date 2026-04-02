@@ -2,7 +2,9 @@ package operator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/abix-/k3sc/internal/dispatch"
@@ -186,6 +188,7 @@ func (r *Reconciler) handleRunning(ctx context.Context, task *AgentJob) (ctrl.Re
 		now := metav1.Now()
 		task.Status.Phase = TaskPhaseSucceeded
 		task.Status.FinishedAt = &now
+		task.Status.Usage = r.collectUsage(ctx, task)
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
@@ -195,6 +198,7 @@ func (r *Reconciler) handleRunning(ctx context.Context, task *AgentJob) (ctrl.Re
 		task.Status.FinishedAt = &now
 		task.Status.LastError = "pod failed"
 		task.Status.FailureCount++
+		task.Status.Usage = r.collectUsage(ctx, task)
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
@@ -242,6 +246,72 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *AgentJob) (ctrl.
 	}
 
 	return ctrl.Result{}, r.Status().Update(ctx, task)
+}
+
+// collectUsage reads the pod logs for a completed job and parses the [usage] JSON line.
+func (r *Reconciler) collectUsage(ctx context.Context, task *AgentJob) *UsageStats {
+	podName := ""
+	pods, err := r.K8s.CoreV1().Pods(types.Namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: fmt.Sprintf("app=claude-agent,issue-number=%d", task.Spec.IssueNumber),
+	})
+	if err != nil || len(pods.Items) == 0 {
+		return nil
+	}
+	// find most recent pod
+	for _, p := range pods.Items {
+		if podName == "" || p.CreationTimestamp.After(pods.Items[0].CreationTimestamp.Time) {
+			podName = p.Name
+		}
+	}
+
+	lines, err := k8s.GetPodLogLines(ctx, r.K8s, podName, 100)
+	if err != nil {
+		return nil
+	}
+	return parseUsageFromLines(lines)
+}
+
+const usageLinePrefix = "[usage] "
+
+// usageLogLine matches the snake_case JSON emitted by entrypoint.sh collect_usage().
+type usageLogLine struct {
+	InputTokens         int64    `json:"input_tokens"`
+	OutputTokens        int64    `json:"output_tokens"`
+	CacheCreationTokens int64    `json:"cache_creation_tokens"`
+	CacheReadTokens     int64    `json:"cache_read_tokens"`
+	TotalTokens         int64    `json:"total_tokens"`
+	CacheHitRate        float64  `json:"cache_hit_rate"`
+	OutputRatio         float64  `json:"output_ratio"`
+	Models              []string `json:"models"`
+	Entries             int      `json:"entries"`
+}
+
+func parseUsageFromLines(lines []string) *UsageStats {
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(line, usageLinePrefix) {
+			continue
+		}
+		jsonStr := line[len(usageLinePrefix):]
+		var raw usageLogLine
+		if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
+			continue
+		}
+		if raw.TotalTokens > 0 {
+			return &UsageStats{
+				InputTokens:         raw.InputTokens,
+				OutputTokens:        raw.OutputTokens,
+				CacheCreationTokens: raw.CacheCreationTokens,
+				CacheReadTokens:     raw.CacheReadTokens,
+				TotalTokens:         raw.TotalTokens,
+				CacheHitRate:        raw.CacheHitRate,
+				OutputRatio:         raw.OutputRatio,
+				Models:              raw.Models,
+				Entries:             raw.Entries,
+			}
+		}
+	}
+	return nil
 }
 
 func isJobDead(job *batchv1.Job) bool {
