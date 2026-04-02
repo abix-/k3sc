@@ -111,24 +111,24 @@ spec:
       volumes:
         - name: timberbot
           hostPath:
-            path: /mnt/c/Users/aiannaco/Documents/Timberborn/Mods/Timberbot
+            path: __HOME_WSL__/Documents/Timberborn/Mods/Timberbot
             type: Directory
         - name: workspaces
           persistentVolumeClaim:
             claimName: workspaces
         - name: claude-skills
           hostPath:
-            path: /mnt/c/Users/aiannaco/.claude/skills
+            path: __HOME_WSL__/.claude/skills
             type: Directory
         - name: claude-commands
           hostPath:
-            path: /mnt/c/Users/aiannaco/.claude/commands
+            path: __HOME_WSL__/.claude/commands
             type: Directory
         - name: claude-docs
           hostPath:
-            path: /mnt/c/Users/aiannaco/.claude/docs
+            path: __HOME_WSL__/.claude/docs
             type: Directory
         - name: claude-md
           hostPath:
-            path: /mnt/c/Users/aiannaco/.claude/CLAUDE.md
+            path: __HOME_WSL__/.claude/CLAUDE.md
             type: File

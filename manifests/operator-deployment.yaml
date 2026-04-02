@@ -37,5 +37,5 @@ spec:
             name: dispatcher-scripts
         - name: codex-sessions
           hostPath:
-            path: /mnt/c/Users/aiannaco/.codex/sessions
+            path: __HOME_WSL__/.codex/sessions
             type: DirectoryOrCreate

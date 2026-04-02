@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -64,6 +65,39 @@ func ensureSecret() error {
 
 	fmt.Println("=== applying secret from local GitHub, Claude, and Codex auth ===")
 	return runRotateAuth(nil, nil)
+}
+
+func wslHomePath() string {
+	home := os.Getenv("USERPROFILE")
+	if home == "" {
+		home = os.Getenv("HOME")
+	}
+	p := strings.ReplaceAll(home, `\`, `/`)
+	if len(p) >= 2 && p[1] == ':' {
+		p = "/mnt/" + strings.ToLower(p[:1]) + p[2:]
+	}
+	return p
+}
+
+func renderManifest(path string, replacements map[string]string) ([]byte, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	content := string(data)
+	for placeholder, value := range replacements {
+		content = strings.ReplaceAll(content, placeholder, value)
+	}
+	return []byte(content), nil
+}
+
+func applyRenderedManifest(desc string, data []byte) error {
+	fmt.Printf("=== %s ===\n", desc)
+	c := exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "sudo", "k3s", "kubectl", "apply", "-f", "-")
+	c.Stdin = bytes.NewReader(data)
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	return c.Run()
 }
 
 func findRepoRoot() (string, error) {
@@ -142,21 +176,39 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	// 5. apply k8s manifests
 	kubectl := "sudo k3s kubectl"
 	mntManifests := mntRoot + "/manifests"
+	manifestsDir := filepath.Join(repoRoot, "manifests")
 
-	// order matters: namespace -> CRD -> RBAC -> secret -> PVCs -> configmap -> operator
-	manifests := []string{
+	replacements := map[string]string{
+		"__HOME_WSL__": wslHomePath(),
+	}
+
+	// static manifests (no placeholders)
+	staticManifests := []string{
 		"namespace.yaml",
 		"crd.yaml",
 		"rbac.yaml",
 		"pvc-cargo-target.yaml",
 		"pvc-cargo-home.yaml",
 		"pvc-workspaces.yaml",
-		"operator-deployment.yaml",
 	}
-	for _, file := range manifests {
+	for _, file := range staticManifests {
 		applyCmd := fmt.Sprintf("%s apply -f %s/%s", kubectl, mntManifests, file)
 		if err := runCmd("applying "+file,
 			"wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", applyCmd); err != nil {
+			return fmt.Errorf("apply %s: %w", file, err)
+		}
+	}
+
+	// rendered manifests (replace __HOME_WSL__ and other placeholders)
+	renderedManifests := []string{
+		"operator-deployment.yaml",
+	}
+	for _, file := range renderedManifests {
+		data, err := renderManifest(filepath.Join(manifestsDir, file), replacements)
+		if err != nil {
+			return fmt.Errorf("render %s: %w", file, err)
+		}
+		if err := applyRenderedManifest("applying "+file, data); err != nil {
 			return fmt.Errorf("apply %s: %w", file, err)
 		}
 	}
@@ -166,9 +218,40 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// configmap from job template (special: create --dry-run | apply)
-	cmCmd := fmt.Sprintf("%s create configmap dispatcher-scripts -n claude-agents --from-file=job-template.yaml=%s/job-template.yaml --from-file=timberbot-job-template.yaml=%s/timberbot-job-template.yaml --dry-run=client -o yaml | %s apply -f -",
-		kubectl, mntManifests, mntManifests, kubectl)
+	// configmap from rendered job templates
+	jobTemplate, err := renderManifest(filepath.Join(manifestsDir, "job-template.yaml"), replacements)
+	if err != nil {
+		return fmt.Errorf("render job-template: %w", err)
+	}
+	timberbotTemplate, err := renderManifest(filepath.Join(manifestsDir, "timberbot-job-template.yaml"), replacements)
+	if err != nil {
+		return fmt.Errorf("render timberbot-template: %w", err)
+	}
+
+	// write rendered templates to temp files for configmap creation
+	tmpDir, err := os.MkdirTemp("", "k3sc-deploy-")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	tmpJob := filepath.Join(tmpDir, "job-template.yaml")
+	tmpTimberbot := filepath.Join(tmpDir, "timberbot-job-template.yaml")
+	if err := os.WriteFile(tmpJob, jobTemplate, 0o644); err != nil {
+		return fmt.Errorf("write temp job template: %w", err)
+	}
+	if err := os.WriteFile(tmpTimberbot, timberbotTemplate, 0o644); err != nil {
+		return fmt.Errorf("write temp timberbot template: %w", err)
+	}
+	mntTmpJob := strings.ReplaceAll(tmpJob, `\`, `/`)
+	if len(mntTmpJob) >= 2 && mntTmpJob[1] == ':' {
+		mntTmpJob = "/mnt/" + strings.ToLower(mntTmpJob[:1]) + mntTmpJob[2:]
+	}
+	mntTmpTimberbot := strings.ReplaceAll(tmpTimberbot, `\`, `/`)
+	if len(mntTmpTimberbot) >= 2 && mntTmpTimberbot[1] == ':' {
+		mntTmpTimberbot = "/mnt/" + strings.ToLower(mntTmpTimberbot[:1]) + mntTmpTimberbot[2:]
+	}
+	cmCmd := fmt.Sprintf("%s create configmap dispatcher-scripts -n claude-agents --from-file=job-template.yaml=%s --from-file=timberbot-job-template.yaml=%s --dry-run=client -o yaml | %s apply -f -",
+		kubectl, mntTmpJob, mntTmpTimberbot, kubectl)
 	if err := runCmd("applying job template configmap",
 		"wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", cmCmd); err != nil {
 		return fmt.Errorf("apply configmap: %w", err)
