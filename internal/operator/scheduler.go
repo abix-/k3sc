@@ -728,14 +728,13 @@ func (r *DispatchReconciler) setTaskPending(ctx context.Context, key client.Obje
 		if err := r.Get(ctx, key, latest); err != nil {
 			return err
 		}
-		desired := AgentJobStatus{
+		if latest.Status.Phase == TaskPhasePending && latest.Status.FailureCount == failureCount {
+			return nil
+		}
+		latest.Status = AgentJobStatus{
 			Phase:        TaskPhasePending,
 			FailureCount: failureCount,
 		}
-		if latest.Status == desired {
-			return nil
-		}
-		latest.Status = desired
 		return r.Status().Update(ctx, latest)
 	})
 }

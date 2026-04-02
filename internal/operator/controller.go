@@ -189,8 +189,11 @@ func (r *Reconciler) handleRunning(ctx context.Context, task *AgentJob) (ctrl.Re
 		now := metav1.Now()
 		task.Status.Phase = TaskPhaseSucceeded
 		task.Status.FinishedAt = &now
-		task.Status.Usage = r.collectUsage(ctx, task)
+		lines := r.getPodLogLines(ctx, task)
+		task.Status.Usage = parseUsageFromLines(lines)
+		task.Status.SecurityEvents = parseSecurityEvents(lines)
 		r.recordCost(task, 0)
+		r.logSecurityEvents(ctx, task)
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
@@ -200,8 +203,11 @@ func (r *Reconciler) handleRunning(ctx context.Context, task *AgentJob) (ctrl.Re
 		task.Status.FinishedAt = &now
 		task.Status.LastError = "pod failed"
 		task.Status.FailureCount++
-		task.Status.Usage = r.collectUsage(ctx, task)
+		lines := r.getPodLogLines(ctx, task)
+		task.Status.Usage = parseUsageFromLines(lines)
+		task.Status.SecurityEvents = parseSecurityEvents(lines)
 		r.recordCost(task, 1)
+		r.logSecurityEvents(ctx, task)
 		return ctrl.Result{}, r.Status().Update(ctx, task)
 	}
 
@@ -251,8 +257,8 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *AgentJob) (ctrl.
 	return ctrl.Result{}, r.Status().Update(ctx, task)
 }
 
-// collectUsage reads the pod logs for a completed job and parses the [usage] JSON line.
-func (r *Reconciler) collectUsage(ctx context.Context, task *AgentJob) *UsageStats {
+// getPodLogLines reads the tail of pod logs for a completed job.
+func (r *Reconciler) getPodLogLines(ctx context.Context, task *AgentJob) []string {
 	podName := ""
 	pods, err := r.K8s.CoreV1().Pods(types.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: fmt.Sprintf("app=claude-agent,issue-number=%d", task.Spec.IssueNumber),
@@ -267,11 +273,11 @@ func (r *Reconciler) collectUsage(ctx context.Context, task *AgentJob) *UsageSta
 		}
 	}
 
-	lines, err := k8s.GetPodLogLines(ctx, r.K8s, podName, 100)
+	lines, err := k8s.GetPodLogLines(ctx, r.K8s, podName, 200)
 	if err != nil {
 		return nil
 	}
-	return parseUsageFromLines(lines)
+	return lines
 }
 
 const usageLinePrefix = "[usage] "
@@ -316,6 +322,30 @@ func parseUsageFromLines(lines []string) *UsageStats {
 		}
 	}
 	return nil
+}
+
+const securityLinePrefix = "[security] "
+
+func parseSecurityEvents(lines []string) []string {
+	var events []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		idx := strings.Index(line, securityLinePrefix)
+		if idx == -1 {
+			continue
+		}
+		event := line[idx+len(securityLinePrefix):]
+		if event != "" {
+			events = append(events, event)
+		}
+	}
+	return events
+}
+
+func (r *Reconciler) logSecurityEvents(ctx context.Context, task *AgentJob) {
+	for _, event := range task.Status.SecurityEvents {
+		olog("SECURITY", "#%d %s: %s", task.Spec.IssueNumber, task.Status.Agent, event)
+	}
 }
 
 func isJobDead(job *batchv1.Job) bool {

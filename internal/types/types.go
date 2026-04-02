@@ -129,8 +129,9 @@ type TaskInfo struct {
 	Started      *time.Time
 	Finished     *time.Time
 	RuntimePhase PodPhase
-	LogTail      string
-	Usage        *TaskUsage
+	LogTail        string
+	Usage          *TaskUsage
+	SecurityEvents []string
 }
 
 // TaskUsage holds token usage stats for a completed agent job.

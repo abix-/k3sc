@@ -54,14 +54,14 @@ GHWRAPPER_HEAD
     ${cmd})
         case "\$SUB" in
             ${pattern}) exec /usr/bin/gh "\$@" ;;
-            *) echo "ERROR: gh ${cmd} \$SUB is not allowed. Permitted: ${subs}" >&2; exit 1 ;;
+            *) echo "[security] gh ${cmd} \$SUB blocked (allowed: ${subs})" >&2; exit 1 ;;
         esac
         ;;
 GHWRAPPER_RULE
     done
     cat << 'GHWRAPPER_TAIL'
     *)
-        echo "ERROR: gh $CMD is not allowed." >&2
+        echo "[security] gh $CMD blocked (not in allowlist)" >&2
         exit 1
         ;;
 esac
@@ -121,7 +121,7 @@ ALLOWED_BRANCH="${ALLOWED_BRANCH}"
 while read local_ref local_sha remote_ref remote_sha; do
     branch=\$(echo "\$remote_ref" | sed 's|refs/heads/||')
     if [ "\$branch" != "\$ALLOWED_BRANCH" ]; then
-        echo "ERROR: push to '\$branch' blocked. Only '\$ALLOWED_BRANCH' is allowed."
+        echo "[security] push to '\$branch' blocked (only '\$ALLOWED_BRANCH' allowed)"
         exit 1
     fi
 done
@@ -134,8 +134,7 @@ BLOCKED_PATTERN=$(echo "${SAFETY_BLOCKED_COMMIT_WORDS}" | sed 's/,/|/g')
 cat > "${WORKSPACE}/.git/hooks/commit-msg" << HOOK
 #!/bin/bash
 if grep -qiE "(${BLOCKED_PATTERN})\s+#[0-9]+" "\$1"; then
-    echo "ERROR: commit messages must not use ${SAFETY_BLOCKED_COMMIT_WORDS} #N (auto-closes issues)."
-    echo "Use 'ref #N' or 'for #N' instead."
+    echo "[security] commit blocked: message contains ${SAFETY_BLOCKED_COMMIT_WORDS} #N (auto-closes issues)"
     exit 1
 fi
 exit 0

@@ -75,7 +75,8 @@ type AgentJobStatus struct {
 	NextAction   string       `json:"nextAction,omitempty"` // needs-review, needs-human
 	StartedAt    *metav1.Time `json:"startedAt,omitempty"`
 	FinishedAt   *metav1.Time `json:"finishedAt,omitempty"`
-	Usage        *UsageStats  `json:"usage,omitempty"`
+	Usage          *UsageStats  `json:"usage,omitempty"`
+	SecurityEvents []string     `json:"securityEvents,omitempty"`
 }
 
 // UsageStats holds token usage metrics collected from agent pod logs.

@@ -153,6 +153,9 @@ func GetAgentJobs(ctx context.Context) ([]types.TaskInfo, error) {
 				t.Usage.Models = models
 			}
 		}
+		if secEvents, _, _ := unstructured.NestedStringSlice(item.Object, "status", "securityEvents"); len(secEvents) > 0 {
+			t.SecurityEvents = secEvents
+		}
 		if startedAtRaw != "" {
 			if ts, err := time.Parse(time.RFC3339, startedAtRaw); err == nil {
 				t.Started = &ts

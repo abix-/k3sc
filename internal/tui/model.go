@@ -478,6 +478,21 @@ func (m Model) renderView(maxVisibleTasks int) string {
 	sections = append(sections, titleFg.Render(taskTitle))
 	sections = append(sections, strings.Join(taskLines, "\n"))
 
+	// -- security events --
+	var secLines []string
+	for _, t := range d.Tasks {
+		if len(t.SecurityEvents) > 0 {
+			for _, event := range t.SecurityEvents {
+				secLines = append(secLines, red.Render(fmt.Sprintf("  #%-5d %-10s %s", t.Issue, t.Agent, event)))
+			}
+		}
+	}
+	if len(secLines) > 0 {
+		sections = append(sections, sep)
+		sections = append(sections, red.Render(fmt.Sprintf(" Security Events (%d)", len(secLines))))
+		sections = append(sections, strings.Join(secLines, "\n"))
+	}
+
 	// -- costs --
 	var costLines []string
 	if len(d.Costs) == 0 {
