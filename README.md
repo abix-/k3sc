@@ -67,7 +67,7 @@ The `sessions` command provides a local live dashboard of running `claude.exe` p
 - **Agent pods**: Ubuntu 24.04 with Node.js, Claude Code CLI, Rust toolchain, gh CLI, kubectl
 - **Shared PVCs**: `workspaces` (git clones), `cargo-target` (build artifacts), `cargo-home` (crate registry)
 - **Host mounts**: Claude skills, commands, docs, and CLAUDE.md mounted read-only from the host
-- **Auth**: GitHub, Claude, and Codex auth injected into pods from a k8s secret; pod auth does not depend on host-mounted token files
+- **Auth**: GitHub, Claude (OAuth, API key, or Bedrock), and Codex auth injected into pods from a k8s secret; pod auth does not depend on host-mounted token files; k3s secrets encryption recommended
 
 ## Configuration
 
@@ -109,15 +109,21 @@ Open PR reservations are separate from issue dispatch. They are coordinated thro
 
 ## Prerequisites
 
-- k3s running in WSL2 (Ubuntu 24.04)
+- k3s running in WSL2 (Ubuntu 24.04) with secrets encryption enabled
 - Go 1.25+ (for building the CLI)
-- Claude Code OAuth token (`claude setup-token`)
-- Codex auth (`codex login`) or `OPENAI_API_KEY`
+- At least one Claude auth method:
+  - Claude Code OAuth token (`claude setup-token`) for Max subscription
+  - `ANTHROPIC_API_KEY` env var for direct API access
+  - AWS credentials (`~/.aws/credentials`) for Bedrock
+- Codex auth (`codex login`) or `OPENAI_API_KEY` (optional, for codex agent family)
 - GitHub personal access token with repo scope
 
 ## Quick start
 
 ```bash
+# install k3s in WSL2 with secrets encryption (protects API keys at rest)
+wsl -d Ubuntu-24.04 -- bash -c "curl -sfL https://get.k3s.io | sh -s - --secrets-encryption"
+
 # build CLI
 cd /c/code/k3sc
 go build -o k3sc.exe .
@@ -125,10 +131,12 @@ go build -o k3sc.exe .
 # cross-compile linux binary for container
 GOOS=linux GOARCH=amd64 go build -o image/k3sc .
 
-# ensure local auth exists:
-# - ~/.gh-token
-# - ~/.claude/.credentials.json
-# - ~/.codex/auth.json or OPENAI_API_KEY
+# ensure local auth exists (at least one Claude auth source required):
+# - ~/.claude/.credentials.json (OAuth/subscription)
+# - ANTHROPIC_API_KEY env var (direct API)
+# - ~/.aws/credentials (Bedrock -- rotate-auth auto-sets CLAUDE_CODE_USE_BEDROCK=1)
+# - ~/.gh-token (required)
+# - ~/.codex/auth.json or OPENAI_API_KEY (optional)
 #
 # deploy will create/update the k8s claude-secrets secret from those local auth sources
 sudo k3s kubectl apply -f manifests/namespace.yaml
