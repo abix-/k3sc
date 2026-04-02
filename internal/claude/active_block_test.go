@@ -144,6 +144,60 @@ func TestActiveBlockCacheRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCreateUniqueHashBedrockFallsBackToMessageID(t *testing.T) {
+	hash := createUniqueHash("msg_bdrk_017r6fGavax2a6pLrv7aXj4U", "")
+	if hash != "msg_bdrk_017r6fGavax2a6pLrv7aXj4U" {
+		t.Fatalf("hash = %q, want message ID only for Bedrock (empty requestId)", hash)
+	}
+
+	hash2 := createUniqueHash("msg_01abc", "req_123")
+	if hash2 != "msg_01abc:req_123" {
+		t.Fatalf("hash = %q, want messageID:requestID for subscription", hash2)
+	}
+
+	hash3 := createUniqueHash("", "req_123")
+	if hash3 != "" {
+		t.Fatalf("hash = %q, want empty for missing messageID", hash3)
+	}
+}
+
+func TestLoadUsageEntriesDedupsBedrockStreaming(t *testing.T) {
+	base := t.TempDir()
+	claudeRoot := filepath.Join(base, ".claude")
+	projectsDir := filepath.Join(claudeRoot, claudeProjectsDirName, "test-project")
+	if err := os.MkdirAll(projectsDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	// Simulate Bedrock streaming: same message ID, increasing output tokens
+	content := `{"timestamp":"2026-03-26T22:00:00Z","message":{"id":"msg_bdrk_abc","model":"claude-opus-4-6","usage":{"input_tokens":3,"output_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":200}}}
+{"timestamp":"2026-03-26T22:00:01Z","message":{"id":"msg_bdrk_abc","model":"claude-opus-4-6","usage":{"input_tokens":3,"output_tokens":500,"cache_creation_input_tokens":100,"cache_read_input_tokens":200}}}
+{"timestamp":"2026-03-26T22:01:00Z","message":{"id":"msg_bdrk_def","model":"claude-opus-4-6","usage":{"input_tokens":5,"output_tokens":20,"cache_creation_input_tokens":50,"cache_read_input_tokens":60}}}
+`
+	testFile := filepath.Join(projectsDir, "test.jsonl")
+	if err := os.WriteFile(testFile, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	files := []usageFile{{Path: testFile}}
+	entries, err := loadUsageEntries(files, time.Time{}, false)
+	if err != nil {
+		t.Fatalf("loadUsageEntries() error = %v", err)
+	}
+
+	if len(entries) != 2 {
+		t.Fatalf("len(entries) = %d, want 2 (deduped by message ID)", len(entries))
+	}
+
+	// First entry should be the last streaming update (output_tokens=500)
+	if entries[0].OutputTokens != 500 {
+		t.Fatalf("entries[0].OutputTokens = %d, want 500 (last streaming update)", entries[0].OutputTokens)
+	}
+	if entries[1].OutputTokens != 20 {
+		t.Fatalf("entries[1].OutputTokens = %d, want 20", entries[1].OutputTokens)
+	}
+}
+
 func TestNormalizeActiveBlockCacheSeedsLegacyTokenLimit(t *testing.T) {
 	start := time.Date(2026, 3, 26, 21, 0, 0, 0, time.UTC)
 	end := start.Add(activeBlockDuration)

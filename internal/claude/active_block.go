@@ -8,11 +8,9 @@ import (
 	"io/fs"
 	"math"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -23,19 +21,11 @@ const (
 	activeBlockLookback    = 2 * activeBlockDuration
 	scannerBufferSizeBytes = 16 * 1024 * 1024
 	blockWarningThreshold  = 0.8
-	activeBlockCacheName   = "claude-active-block.json"
-	activeBlockCacheVer    = 2
-
-	ccusagePricingMarker = "const PREFETCHED_CLAUDE_PRICING = "
+	activeBlockCacheName = "claude-active-block.json"
+	activeBlockCacheVer  = 2
 )
 
-var (
-	pricingOnce sync.Once
-	pricingData map[string]ccusageModelPricing
-	pricingErr  error
-)
-
-var ccusageProviderPrefixes = []string{
+var providerPrefixes = []string{
 	"anthropic/",
 	"claude-3-5-",
 	"claude-3-",
@@ -120,7 +110,7 @@ type projectedUsage struct {
 	RemainingMinutes int
 }
 
-type ccusageModelPricing struct {
+type modelPricing struct {
 	InputCostPerToken                    float64                         `json:"input_cost_per_token"`
 	OutputCostPerToken                   float64                         `json:"output_cost_per_token"`
 	CacheCreationInputTokenCost          float64                         `json:"cache_creation_input_token_cost"`
@@ -129,10 +119,10 @@ type ccusageModelPricing struct {
 	OutputCostPerTokenAbove200K          float64                         `json:"output_cost_per_token_above_200k_tokens"`
 	CacheCreationInputTokenCostAbove200K float64                         `json:"cache_creation_input_token_cost_above_200k_tokens"`
 	CacheReadInputTokenCostAbove200K     float64                         `json:"cache_read_input_token_cost_above_200k_tokens"`
-	ProviderSpecificEntry                *ccusageProviderSpecificPricing `json:"provider_specific_entry"`
+	ProviderSpecificEntry                *providerSpecificPricing `json:"provider_specific_entry"`
 }
 
-type ccusageProviderSpecificPricing struct {
+type providerSpecificPricing struct {
 	Fast float64 `json:"fast"`
 }
 
@@ -303,16 +293,12 @@ func collectUsageFiles(claudePaths []string, cutoff time.Time) ([]usageFile, err
 }
 
 func loadUsageEntries(files []usageFile, cutoff time.Time, includeCost bool) ([]loadedUsageEntry, error) {
-	processed := make(map[string]struct{}, 1024)
+	dedupIndex := make(map[string]int, 1024)
 	entries := make([]loadedUsageEntry, 0, 1024)
 
-	var pricing map[string]ccusageModelPricing
+	var pricing map[string]modelPricing
 	if includeCost {
-		var err error
-		pricing, err = loadInstalledCCUsagePricing()
-		if err != nil {
-			return nil, err
-		}
+		pricing, _ = loadInstalledCCUsagePricing()
 	}
 
 	for _, file := range files {
@@ -329,14 +315,15 @@ func loadUsageEntries(files []usageFile, cutoff time.Time, includeCost bool) ([]
 			if !ok {
 				continue
 			}
-			if uniqueHash != "" {
-				if _, exists := processed[uniqueHash]; exists {
-					continue
-				}
-				processed[uniqueHash] = struct{}{}
-			}
 			if !cutoff.IsZero() && entry.Timestamp.Before(cutoff) {
 				continue
+			}
+			if uniqueHash != "" {
+				if idx, exists := dedupIndex[uniqueHash]; exists {
+					entries[idx] = entry
+					continue
+				}
+				dedupIndex[uniqueHash] = len(entries)
 			}
 			entries = append(entries, entry)
 		}
@@ -352,7 +339,7 @@ func loadUsageEntries(files []usageFile, cutoff time.Time, includeCost bool) ([]
 	return entries, nil
 }
 
-func parseUsageEntry(line string, pricing map[string]ccusageModelPricing, includeCost bool) (loadedUsageEntry, string, bool) {
+func parseUsageEntry(line string, pricing map[string]modelPricing, includeCost bool) (loadedUsageEntry, string, bool) {
 	line = strings.TrimSpace(line)
 	if line == "" {
 		return loadedUsageEntry{}, "", false
@@ -401,7 +388,7 @@ func parseUsageEntry(line string, pricing map[string]ccusageModelPricing, includ
 		true
 }
 
-func calculateCostForUsage(payload usageDataLine, pricing map[string]ccusageModelPricing) float64 {
+func calculateCostForUsage(payload usageDataLine, pricing map[string]modelPricing) float64 {
 	if payload.CostUSD != nil {
 		return *payload.CostUSD
 	}
@@ -425,55 +412,29 @@ func calculateCostForUsage(payload usageDataLine, pricing map[string]ccusageMode
 	return baseCost
 }
 
-func loadInstalledCCUsagePricing() (map[string]ccusageModelPricing, error) {
-	pricingOnce.Do(func() {
-		bundlePath, err := locateInstalledCCUsageBundle()
-		if err != nil {
-			pricingErr = err
-			return
-		}
-
-		raw, err := os.ReadFile(bundlePath)
-		if err != nil {
-			pricingErr = fmt.Errorf("read %s: %w", bundlePath, err)
-			return
-		}
-
-		jsonObject, err := extractJSONObjectAfterMarker(string(raw), ccusagePricingMarker)
-		if err != nil {
-			pricingErr = fmt.Errorf("extract ccusage pricing data: %w", err)
-			return
-		}
-
-		var data map[string]ccusageModelPricing
-		if err := json.Unmarshal([]byte(jsonObject), &data); err != nil {
-			pricingErr = fmt.Errorf("parse ccusage pricing data: %w", err)
-			return
-		}
-		pricingData = data
-	})
-	if pricingErr != nil {
-		return nil, pricingErr
-	}
-	return pricingData, nil
+var embeddedPricing = map[string]modelPricing{
+	"claude-opus-4-6": {
+		InputCostPerToken:           15.0 / 1_000_000,
+		OutputCostPerToken:          75.0 / 1_000_000,
+		CacheCreationInputTokenCost: 18.75 / 1_000_000,
+		CacheReadInputTokenCost:     1.50 / 1_000_000,
+	},
+	"claude-sonnet-4-6": {
+		InputCostPerToken:           3.0 / 1_000_000,
+		OutputCostPerToken:          15.0 / 1_000_000,
+		CacheCreationInputTokenCost: 3.75 / 1_000_000,
+		CacheReadInputTokenCost:     0.30 / 1_000_000,
+	},
+	"claude-haiku-4-5": {
+		InputCostPerToken:           0.80 / 1_000_000,
+		OutputCostPerToken:          4.0 / 1_000_000,
+		CacheCreationInputTokenCost: 1.0 / 1_000_000,
+		CacheReadInputTokenCost:     0.08 / 1_000_000,
+	},
 }
 
-func locateInstalledCCUsageBundle() (string, error) {
-	ccusagePath, err := exec.LookPath("ccusage")
-	if err != nil {
-		return "", fmt.Errorf("ccusage not found in PATH: %w", err)
-	}
-
-	packageDir := filepath.Join(filepath.Dir(ccusagePath), "node_modules", "ccusage")
-	distMatches, err := filepath.Glob(filepath.Join(packageDir, "dist", "data-loader-*.js"))
-	if err != nil {
-		return "", fmt.Errorf("find ccusage data-loader bundle: %w", err)
-	}
-	if len(distMatches) == 0 {
-		return "", errors.New("find ccusage data-loader bundle: no data-loader-*.js found")
-	}
-	sort.Strings(distMatches)
-	return distMatches[0], nil
+func loadInstalledCCUsagePricing() (map[string]modelPricing, error) {
+	return embeddedPricing, nil
 }
 
 func loadActiveBlockCache() (*activeBlockCache, error) {
@@ -613,60 +574,14 @@ func sameClaudeRoots(cacheRoots []string, claudePaths []string) bool {
 	return true
 }
 
-func extractJSONObjectAfterMarker(content string, marker string) (string, error) {
-	startMarker := strings.Index(content, marker)
-	if startMarker == -1 {
-		return "", fmt.Errorf("marker %q not found", marker)
-	}
-	start := strings.Index(content[startMarker+len(marker):], "{")
-	if start == -1 {
-		return "", errors.New("pricing object opening brace not found")
-	}
-	start += startMarker + len(marker)
-
-	depth := 0
-	inString := false
-	escaped := false
-	for i := start; i < len(content); i++ {
-		ch := content[i]
-		if inString {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if ch == '\\' {
-				escaped = true
-				continue
-			}
-			if ch == '"' {
-				inString = false
-			}
-			continue
-		}
-
-		switch ch {
-		case '"':
-			inString = true
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				return content[start : i+1], nil
-			}
-		}
-	}
-	return "", errors.New("pricing object closing brace not found")
-}
-
-func matchModelPricing(pricing map[string]ccusageModelPricing, modelName string) (ccusageModelPricing, bool) {
+func matchModelPricing(pricing map[string]modelPricing, modelName string) (modelPricing, bool) {
 	modelName = strings.TrimSpace(modelName)
 	if modelName == "" {
-		return ccusageModelPricing{}, false
+		return modelPricing{}, false
 	}
 
 	candidates := []string{modelName}
-	for _, prefix := range ccusageProviderPrefixes {
+	for _, prefix := range providerPrefixes {
 		candidates = append(candidates, prefix+modelName)
 	}
 	for _, candidate := range candidates {
@@ -688,10 +603,10 @@ func matchModelPricing(pricing map[string]ccusageModelPricing, modelName string)
 		}
 	}
 
-	return ccusageModelPricing{}, false
+	return modelPricing{}, false
 }
 
-func calculateCostFromPricing(tokens *usageTokenPayload, pricing ccusageModelPricing) float64 {
+func calculateCostFromPricing(tokens *usageTokenPayload, pricing modelPricing) float64 {
 	const tieredThreshold = 200_000
 
 	calculateTieredCost := func(total int64, basePrice float64, tieredPrice float64) float64 {
@@ -961,8 +876,11 @@ func displayModelName(model string, speed string) string {
 func createUniqueHash(messageID string, requestID string) string {
 	messageID = strings.TrimSpace(messageID)
 	requestID = strings.TrimSpace(requestID)
-	if messageID == "" || requestID == "" {
+	if messageID == "" {
 		return ""
+	}
+	if requestID == "" {
+		return messageID
 	}
 	return messageID + ":" + requestID
 }

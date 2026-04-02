@@ -121,62 +121,6 @@ type sessionMetadata struct {
 	Name       string `json:"name"`
 }
 
-type ccusageReport struct {
-	SessionID   string         `json:"sessionId"`
-	TotalCost   float64        `json:"totalCost"`
-	TotalTokens int64          `json:"totalTokens"`
-	Entries     []ccusageEntry `json:"entries"`
-}
-
-type ccusageBlocksReport struct {
-	Blocks []ccusageBlock `json:"blocks"`
-}
-
-type ccusageEntry struct {
-	Timestamp           string  `json:"timestamp"`
-	InputTokens         int64   `json:"inputTokens"`
-	OutputTokens        int64   `json:"outputTokens"`
-	CacheCreationTokens int64   `json:"cacheCreationTokens"`
-	CacheReadTokens     int64   `json:"cacheReadTokens"`
-	Model               string  `json:"model"`
-	CostUSD             float64 `json:"costUSD"`
-}
-
-type ccusageBlock struct {
-	ID            string `json:"id"`
-	StartTime     string `json:"startTime"`
-	EndTime       string `json:"endTime"`
-	ActualEndTime string `json:"actualEndTime"`
-	IsActive      bool   `json:"isActive"`
-	IsGap         bool   `json:"isGap"`
-	Entries       int    `json:"entries"`
-	TokenCounts   struct {
-		InputTokens              int64 `json:"inputTokens"`
-		OutputTokens             int64 `json:"outputTokens"`
-		CacheCreationInputTokens int64 `json:"cacheCreationInputTokens"`
-		CacheReadInputTokens     int64 `json:"cacheReadInputTokens"`
-	} `json:"tokenCounts"`
-	TotalTokens int64    `json:"totalTokens"`
-	CostUSD     float64  `json:"costUSD"`
-	Models      []string `json:"models"`
-	BurnRate    struct {
-		TokensPerMinute             float64 `json:"tokensPerMinute"`
-		TokensPerMinuteForIndicator float64 `json:"tokensPerMinuteForIndicator"`
-		CostPerHour                 float64 `json:"costPerHour"`
-	} `json:"burnRate"`
-	Projection struct {
-		TotalTokens      int64   `json:"totalTokens"`
-		TotalCost        float64 `json:"totalCost"`
-		RemainingMinutes int     `json:"remainingMinutes"`
-	} `json:"projection"`
-	TokenLimitStatus struct {
-		Limit          int64   `json:"limit"`
-		ProjectedUsage int64   `json:"projectedUsage"`
-		PercentUsed    float64 `json:"percentUsed"`
-		Status         string  `json:"status"`
-	} `json:"tokenLimitStatus"`
-}
-
 type usageSummary struct {
 	Models              []string
 	EntryCount          int
@@ -194,9 +138,6 @@ func CollectSessions() (*Snapshot, error) {
 	totalStart := time.Now()
 	if runtime.GOOS != "windows" {
 		return nil, errors.New("k3sc sessions is only supported on Windows")
-	}
-	if _, err := exec.LookPath("ccusage"); err != nil {
-		return nil, fmt.Errorf("ccusage not found in PATH: %w", err)
 	}
 
 	processScanStart := time.Now()
@@ -315,127 +256,83 @@ func readSessionMetadata(path string) (*sessionMetadata, error) {
 	return &meta, nil
 }
 
-func loadUsageReport(sessionID string) (*ccusageReport, error) {
-	cmd := exec.Command("ccusage", "session", "--json", "-i", sessionID, "--offline")
-	out, stderr, err := runCommandJSON(cmd)
-	if err != nil {
-		return nil, fmt.Errorf("ccusage %s: %s", sessionID, formatCommandError(err, stderr))
-	}
-
-	var report ccusageReport
-	if err := json.Unmarshal(trimBOM(out), &report); err != nil {
-		return nil, err
-	}
-	return &report, nil
-}
-
 func loadUsageSummary(sessionID string) (*usageSummary, error) {
-	report, err := loadUsageReport(sessionID)
+	claudePaths, err := getClaudePaths()
 	if err != nil {
 		return nil, err
 	}
 
-	summary, err := summarizeCCUsageReport(report)
+	files, err := collectSessionFiles(claudePaths, sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("parse ccusage %s: %w", sessionID, err)
+		return nil, err
 	}
-	return summary, nil
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no JSONL files found for session %s", sessionID)
+	}
+
+	entries, err := loadUsageEntries(files, time.Time{}, true)
+	if err != nil {
+		return nil, err
+	}
+
+	return summarizeEntries(entries), nil
 }
 
-func loadActiveBlockViaCCUsage() (*BlockInfo, error) {
-	cmd := exec.Command("ccusage", "blocks", "--active", "--offline", "--json", "--token-limit", "max")
-	out, stderr, err := runCommandJSON(cmd)
-	if err != nil {
-		return nil, fmt.Errorf("ccusage active block: %s", formatCommandError(err, stderr))
-	}
-
-	var report ccusageBlocksReport
-	if err := json.Unmarshal(trimBOM(out), &report); err != nil {
-		return nil, err
-	}
-	if len(report.Blocks) == 0 {
-		return nil, errors.New("no active block data returned")
-	}
-
-	block := report.Blocks[0]
-	info := &BlockInfo{
-		ID:                   block.ID,
-		IsActive:             block.IsActive,
-		Entries:              block.Entries,
-		InputTokens:          block.TokenCounts.InputTokens,
-		OutputTokens:         block.TokenCounts.OutputTokens,
-		CacheCreationTokens:  block.TokenCounts.CacheCreationInputTokens,
-		CacheReadTokens:      block.TokenCounts.CacheReadInputTokens,
-		TotalTokens:          block.TotalTokens,
-		CostUSD:              block.CostUSD,
-		Models:               append([]string(nil), block.Models...),
-		TokensPerMinute:      block.BurnRate.TokensPerMinute,
-		CostPerHour:          block.BurnRate.CostPerHour,
-		ProjectedTokens:      block.Projection.TotalTokens,
-		ProjectedCostUSD:     block.Projection.TotalCost,
-		RemainingMinutes:     block.Projection.RemainingMinutes,
-		TokenLimit:           block.TokenLimitStatus.Limit,
-		ProjectedUsage:       block.TokenLimitStatus.ProjectedUsage,
-		ProjectedPercentUsed: block.TokenLimitStatus.PercentUsed,
-		TokenLimitStatus:     block.TokenLimitStatus.Status,
-	}
-	info.StartTime = parseOptionalTime(block.StartTime)
-	info.EndTime = parseOptionalTime(block.EndTime)
-	info.ActualEndTime = parseOptionalTime(block.ActualEndTime)
-
-	if info.TokenLimit > 0 {
-		info.CurrentPercentUsed = (float64(info.TotalTokens) / float64(info.TokenLimit)) * 100
-		info.CurrentRemainingTokens = maxInt64(info.TokenLimit-info.TotalTokens, 0)
-		projected := info.ProjectedUsage
-		if projected == 0 && info.ProjectedTokens > 0 {
-			projected = info.ProjectedTokens
-			info.ProjectedUsage = projected
+func collectSessionFiles(claudePaths []string, sessionID string) ([]usageFile, error) {
+	var files []usageFile
+	for _, claudePath := range claudePaths {
+		projectsDir := filepath.Join(claudePath, claudeProjectsDirName)
+		entries, err := os.ReadDir(projectsDir)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, err
 		}
-		if projected > 0 {
-			info.ProjectedRemainingTokens = maxInt64(info.TokenLimit-projected, 0)
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			projectDir := filepath.Join(projectsDir, entry.Name())
+
+			mainFile := filepath.Join(projectDir, sessionID+".jsonl")
+			if _, err := os.Stat(mainFile); err == nil {
+				files = append(files, usageFile{Path: mainFile})
+			}
+
+			subagentsDir := filepath.Join(projectDir, sessionID, "subagents")
+			subEntries, err := os.ReadDir(subagentsDir)
+			if err != nil {
+				continue
+			}
+			for _, sub := range subEntries {
+				if !sub.IsDir() && strings.HasSuffix(sub.Name(), ".jsonl") {
+					files = append(files, usageFile{Path: filepath.Join(subagentsDir, sub.Name())})
+				}
+			}
 		}
 	}
-
-	return info, nil
+	return files, nil
 }
 
-func parseCCUsageSummary(raw []byte) (*usageSummary, error) {
-	var report ccusageReport
-	if err := json.Unmarshal(trimBOM(raw), &report); err != nil {
-		return nil, err
-	}
-	return summarizeCCUsageReport(&report)
-}
-
-func summarizeCCUsageReport(report *ccusageReport) (*usageSummary, error) {
-	if report == nil {
-		return nil, errors.New("nil ccusage report")
-	}
-
+func summarizeEntries(entries []loadedUsageEntry) *usageSummary {
 	modelSet := make(map[string]struct{})
 	summary := &usageSummary{
-		EntryCount:   len(report.Entries),
-		TotalCostUSD: report.TotalCost,
-		TotalTokens:  report.TotalTokens,
+		EntryCount: len(entries),
 	}
 
-	for _, entry := range report.Entries {
+	for _, entry := range entries {
 		summary.InputTokens += entry.InputTokens
+		summary.OutputTokens += entry.OutputTokens
 		summary.CacheCreationTokens += entry.CacheCreationTokens
 		summary.CacheReadTokens += entry.CacheReadTokens
-		summary.OutputTokens += entry.OutputTokens
+		summary.TotalCostUSD += entry.CostUSD
+		summary.TotalTokens += entry.InputTokens + entry.OutputTokens + entry.CacheCreationTokens + entry.CacheReadTokens
 		if entry.Model != "" {
 			modelSet[entry.Model] = struct{}{}
 		}
-		if entry.Timestamp == "" {
-			continue
-		}
-		timestamp, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
-		if err != nil {
-			continue
-		}
-		if summary.LastActivity == nil || timestamp.After(*summary.LastActivity) {
-			ts := timestamp
+		if summary.LastActivity == nil || entry.Timestamp.After(*summary.LastActivity) {
+			ts := entry.Timestamp
 			summary.LastActivity = &ts
 		}
 	}
@@ -448,7 +345,7 @@ func summarizeCCUsageReport(report *ccusageReport) (*usageSummary, error) {
 		}
 		sort.Strings(summary.Models)
 	}
-	return summary, nil
+	return summary
 }
 
 func loadSessionUsage(sessions []SessionInfo) (time.Duration, time.Duration) {
@@ -509,15 +406,6 @@ func summarizeSnapshot(snapshot *Snapshot) {
 		snapshot.CachedTokens += session.CachedTokens
 		snapshot.OutputTokens += session.OutputTokens
 	}
-}
-
-func runCommandJSON(cmd *exec.Cmd) ([]byte, []byte, error) {
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	return stdout.Bytes(), stderr.Bytes(), err
 }
 
 func sortSessions(sessions []SessionInfo) {
