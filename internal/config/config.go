@@ -19,9 +19,19 @@ type Config struct {
 	LaunchDir      string       `json:"launch_dir"`
 	ImageDir       string       `json:"image_dir"`
 	GitHubURL      string       `json:"github_url"`
+	Families       []string     `json:"families"`
+	AWSProfile     string       `json:"aws_profile"`
+	ClaudeRoot     string       `json:"claude_root"`
 	Repos          []RepoConfig `json:"repos"`
 	AllowedAuthors []string     `json:"allowed_authors"`
 	Scan           ScanConfig   `json:"scan"`
+	Safety         SafetyConfig `json:"safety"`
+}
+
+type SafetyConfig struct {
+	BranchPattern      string   `json:"branch_pattern"`
+	GHAllowed          []string `json:"gh_allowed"`
+	BlockedCommitWords []string `json:"blocked_commit_words"`
 }
 
 type RepoConfig struct {
@@ -64,7 +74,9 @@ func defaults() Config {
 		Namespace:      "claude-agents",
 		MaxSlots:       5,
 		LaunchDir:      launchDirDefault(),
+		ClaudeRoot:     claudeRootDefault(),
 		GitHubURL:      "https://github.com",
+		Families:       []string{"claude", "codex"},
 		AllowedAuthors: []string{},
 		Repos:          []RepoConfig{},
 		Scan: ScanConfig{
@@ -72,7 +84,25 @@ func defaults() Config {
 			MaxInterval: Duration{1 * time.Hour},
 			TaskTTL:     Duration{24 * time.Hour},
 		},
+		Safety: SafetyConfig{
+			BranchPattern: "issue-{N}",
+			GHAllowed: []string{
+				"auth:status",
+				"issue:view,list,edit",
+				"pr:create,view,list,diff,checks",
+				"repo:view,list,clone",
+			},
+			BlockedCommitWords: []string{"fixes", "closes", "resolves"},
+		},
 	}
+}
+
+func claudeRootDefault() string {
+	home := os.Getenv("USERPROFILE")
+	if home == "" {
+		home = os.Getenv("HOME")
+	}
+	return filepath.Join(home, ".claude")
 }
 
 func launchDirDefault() string {
@@ -109,6 +139,9 @@ func Load() {
 	if file.MaxSlots != 0 {
 		C.MaxSlots = file.MaxSlots
 	}
+	if file.ClaudeRoot != "" {
+		C.ClaudeRoot = file.ClaudeRoot
+	}
 	if file.LaunchDir != "" {
 		C.LaunchDir = file.LaunchDir
 	}
@@ -117,6 +150,12 @@ func Load() {
 	}
 	if file.GitHubURL != "" {
 		C.GitHubURL = file.GitHubURL
+	}
+	if len(file.Families) > 0 {
+		C.Families = file.Families
+	}
+	if file.AWSProfile != "" {
+		C.AWSProfile = file.AWSProfile
 	}
 	if len(file.Repos) > 0 {
 		C.Repos = file.Repos
@@ -132,6 +171,15 @@ func Load() {
 	}
 	if file.Scan.TaskTTL.Duration != 0 {
 		C.Scan.TaskTTL = file.Scan.TaskTTL
+	}
+	if file.Safety.BranchPattern != "" {
+		C.Safety.BranchPattern = file.Safety.BranchPattern
+	}
+	if len(file.Safety.GHAllowed) > 0 {
+		C.Safety.GHAllowed = file.Safety.GHAllowed
+	}
+	if len(file.Safety.BlockedCommitWords) > 0 {
+		C.Safety.BlockedCommitWords = file.Safety.BlockedCommitWords
 	}
 
 	apply()

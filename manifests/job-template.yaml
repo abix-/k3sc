@@ -24,6 +24,8 @@ spec:
         agent-family: "__AGENT_FAMILY__"
         repo: "__REPO_NAME__"
     spec:
+      securityContext:
+        fsGroup: 1000
       restartPolicy: Never
       containers:
         - name: claude-agent
@@ -44,6 +46,12 @@ spec:
               value: "__JOB_KIND__"
             - name: PR_NUMBER
               value: "__PR_NUMBER__"
+            - name: SAFETY_BRANCH_PATTERN
+              value: "__SAFETY_BRANCH_PATTERN__"
+            - name: SAFETY_GH_ALLOWED
+              value: "__SAFETY_GH_ALLOWED__"
+            - name: SAFETY_BLOCKED_COMMIT_WORDS
+              value: "__SAFETY_BLOCKED_COMMIT_WORDS__"
             - name: CLAUDE_CODE_OAUTH_TOKEN
               valueFrom:
                 secretKeyRef:
@@ -97,6 +105,12 @@ spec:
                   name: claude-secrets
                   key: AWS_REGION
                   optional: true
+            - name: AWS_SESSION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: claude-secrets
+                  key: AWS_SESSION_TOKEN
+                  optional: true
           volumeMounts:
             - name: cargo-target
               mountPath: /cargo-target
@@ -108,9 +122,6 @@ spec:
               mountPath: /home/claude/.codex/sessions
             - name: claude-skills
               mountPath: /home/claude/.claude/skills
-              readOnly: true
-            - name: claude-commands
-              mountPath: /home/claude/.claude/commands
               readOnly: true
             - name: claude-docs
               mountPath: /home/claude/.claude/docs
@@ -134,17 +145,13 @@ spec:
             type: DirectoryOrCreate
         - name: claude-skills
           hostPath:
-            path: __HOME_WSL__/.claude/skills
-            type: Directory
-        - name: claude-commands
-          hostPath:
-            path: __HOME_WSL__/.claude/commands
+            path: __CLAUDE_ROOT__/skills
             type: Directory
         - name: claude-docs
           hostPath:
-            path: __HOME_WSL__/.claude/docs
+            path: __CLAUDE_ROOT__/docs
             type: Directory
         - name: claude-md
           hostPath:
-            path: __HOME_WSL__/.claude/CLAUDE.md
+            path: __CLAUDE_ROOT__/CLAUDE.md
             type: File

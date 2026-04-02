@@ -67,16 +67,20 @@ func ensureSecret() error {
 	return runRotateAuth(nil, nil)
 }
 
+func toWSLPath(winPath string) string {
+	p := strings.ReplaceAll(winPath, `\`, `/`)
+	if len(p) >= 2 && p[1] == ':' {
+		p = "/mnt/" + strings.ToLower(p[:1]) + p[2:]
+	}
+	return p
+}
+
 func wslHomePath() string {
 	home := os.Getenv("USERPROFILE")
 	if home == "" {
 		home = os.Getenv("HOME")
 	}
-	p := strings.ReplaceAll(home, `\`, `/`)
-	if len(p) >= 2 && p[1] == ':' {
-		p = "/mnt/" + strings.ToLower(p[:1]) + p[2:]
-	}
-	return p
+	return toWSLPath(home)
 }
 
 func renderManifest(path string, replacements map[string]string) ([]byte, error) {
@@ -131,6 +135,16 @@ func ensureKubeconfig() error {
 	if err != nil {
 		return fmt.Errorf("read k3s kubeconfig: %w", err)
 	}
+
+	// rewrite 127.0.0.1 to WSL IP so kubectl works from Windows
+	ipCmd := exec.Command("wsl", "-d", "Ubuntu-24.04", "--", "hostname", "-I")
+	ipOut, err := ipCmd.Output()
+	if err == nil {
+		wslIP := strings.Fields(strings.TrimSpace(string(ipOut)))[0]
+		out = bytes.Replace(out, []byte("127.0.0.1"), []byte(wslIP), 1)
+		fmt.Printf("  rewriting server to %s\n", wslIP)
+	}
+
 	if err := os.WriteFile(kubeconfigPath, out, 0o600); err != nil {
 		return fmt.Errorf("write kubeconfig: %w", err)
 	}
@@ -204,7 +218,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	manifestsDir := filepath.Join(repoRoot, "manifests")
 
 	replacements := map[string]string{
-		"__HOME_WSL__": wslHomePath(),
+		"__HOME_WSL__":                    wslHomePath(),
+		"__CLAUDE_ROOT__":                 toWSLPath(config.C.ClaudeRoot),
+		"__SAFETY_BRANCH_PATTERN__":       config.C.Safety.BranchPattern,
+		"__SAFETY_GH_ALLOWED__":           strings.Join(config.C.Safety.GHAllowed, " "),
+		"__SAFETY_BLOCKED_COMMIT_WORDS__": strings.Join(config.C.Safety.BlockedCommitWords, ","),
 	}
 
 	// static manifests (no placeholders)
@@ -241,6 +259,25 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	// secret: don't overwrite if it exists (template has placeholder values)
 	if err := ensureSecret(); err != nil {
 		return err
+	}
+
+	// k3sc config configmap (operator needs ~/.k3sc.yaml)
+	{
+		home := os.Getenv("USERPROFILE")
+		if home == "" {
+			home = os.Getenv("HOME")
+		}
+		cfgPath := filepath.Join(home, ".k3sc.yaml")
+		mntCfg := strings.ReplaceAll(cfgPath, `\`, `/`)
+		if len(mntCfg) >= 2 && mntCfg[1] == ':' {
+			mntCfg = "/mnt/" + strings.ToLower(mntCfg[:1]) + mntCfg[2:]
+		}
+		cfgCmd := fmt.Sprintf("%s create configmap k3sc-config -n claude-agents --from-file=config.yaml=%s --dry-run=client -o yaml | %s apply -f -",
+			kubectl, mntCfg, kubectl)
+		if err := runCmd("applying k3sc-config configmap",
+			"wsl", "-d", "Ubuntu-24.04", "--", "bash", "-c", cfgCmd); err != nil {
+			return fmt.Errorf("apply k3sc-config: %w", err)
+		}
 	}
 
 	// configmap from rendered job templates

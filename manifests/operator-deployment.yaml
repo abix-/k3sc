@@ -31,6 +31,12 @@ spec:
             - name: codex-sessions
               mountPath: /home/claude/.codex/sessions
               readOnly: true
+            - name: k3sc-config
+              mountPath: /home/claude/.k3sc.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: cost-ledger
+              mountPath: /home/claude/.k3sc-costs.jsonl
       volumes:
         - name: dispatcher-scripts
           configMap:
@@ -39,3 +45,10 @@ spec:
           hostPath:
             path: __HOME_WSL__/.codex/sessions
             type: DirectoryOrCreate
+        - name: k3sc-config
+          configMap:
+            name: k3sc-config
+        - name: cost-ledger
+          hostPath:
+            path: __HOME_WSL__/.k3sc-costs.jsonl
+            type: FileOrCreate

@@ -22,6 +22,8 @@ spec:
         agent-slot: "__AGENT_SLOT__"
         agent-family: "__AGENT_FAMILY__"
     spec:
+      securityContext:
+        fsGroup: 1000
       restartPolicy: Never
       containers:
         - name: claude-agent
@@ -99,9 +101,6 @@ spec:
             - name: claude-skills
               mountPath: /home/claude/.claude/skills
               readOnly: true
-            - name: claude-commands
-              mountPath: /home/claude/.claude/commands
-              readOnly: true
             - name: claude-docs
               mountPath: /home/claude/.claude/docs
               readOnly: true
@@ -118,17 +117,13 @@ spec:
             claimName: workspaces
         - name: claude-skills
           hostPath:
-            path: __HOME_WSL__/.claude/skills
-            type: Directory
-        - name: claude-commands
-          hostPath:
-            path: __HOME_WSL__/.claude/commands
+            path: __CLAUDE_ROOT__/skills
             type: Directory
         - name: claude-docs
           hostPath:
-            path: __HOME_WSL__/.claude/docs
+            path: __CLAUDE_ROOT__/docs
             type: Directory
         - name: claude-md
           hostPath:
-            path: __HOME_WSL__/.claude/CLAUDE.md
+            path: __CLAUDE_ROOT__/CLAUDE.md
             type: File
