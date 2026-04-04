@@ -1,5 +1,7 @@
 # k3sc
 
+**Status: active, unstable -- working but breaking changes frequent**
+
 Go CLI that orchestrates [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents as Kubernetes jobs on k3s. An operator watches GitHub issues across multiple repos, claims eligible ones, and spins up pods that autonomously implement, review, and hand off work.
 
 Built for [Endless](https://github.com/abix-/endless), a real-time colony sim in Bevy/Rust.
