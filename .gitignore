@@ -7,3 +7,4 @@ secret-values.yaml
 *.exe
 *.exe~
 image/k3sc
+.claude/
