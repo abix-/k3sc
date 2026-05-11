@@ -1,6 +1,6 @@
 # k3sc
 
-**Status: active, unstable -- working but breaking changes frequent**
+**Status: active, unstable. Working but breaking changes frequent**
 
 Go CLI that orchestrates [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents as Kubernetes jobs on k3s. An operator watches GitHub issues across multiple repos, claims eligible ones, and spins up pods that autonomously implement, review, and hand off work.
 
@@ -33,7 +33,7 @@ Windows-side PR review can also be reserved on demand. `k3sc take --worker claud
 
 | Command | Description |
 |---------|-------------|
-| `k3sc top` | Live TUI dashboard -- agents, issues, PRs, operator logs |
+| `k3sc top` | Live TUI dashboard. Agents, issues, PRs, operator logs |
 | `k3sc top --once` | One-shot text output |
 | `k3sc sessions` | Live TUI dashboard of running Claude Code sessions, `ccusage` totals, and the active 5-hour block |
 | `k3sc sessions --once` | One-shot local Claude session snapshot with active block details |
@@ -73,7 +73,7 @@ The `sessions` command provides a local live dashboard of running `claude.exe` p
 
 ## Configuration
 
-Settings are read from `~/.k3sc.yaml`. All fields are optional -- missing file or fields use defaults.
+Settings are read from `~/.k3sc.yaml`. All fields are optional. Missing file or fields use defaults.
 
 ```yaml
 namespace: claude-agents     # k8s namespace
