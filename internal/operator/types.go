@@ -44,7 +44,7 @@ type AgentJobSpec struct {
 	Slot        int    `json:"slot,omitempty"`
 	Agent       string `json:"agent,omitempty"`
 	Family      string `json:"family,omitempty"`
-	OriginState string `json:"originState"` // "ready" or "needs-review" -- determines next state on completion
+	OriginState string `json:"originState"` // "ready" or "needs-review". Determines next state on completion
 }
 
 type TaskPhase string
