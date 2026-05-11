@@ -55,7 +55,7 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 		existing[n] = true
 		lock := filepath.Join(base, e.Name(), lockFile)
 		if _, err := os.Stat(lock); err == nil {
-			// lockfile exists -- check if the PID inside is still alive
+			// lockfile exists. Check if the PID inside is still alive
 			data, _ := os.ReadFile(lock)
 			pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
 			if pid > 0 {
@@ -66,7 +66,7 @@ func runLaunch(cmd *cobra.Command, args []string) error {
 					continue
 				}
 			}
-			// stale lock -- remove it
+			// stale lock. Remove it
 			os.Remove(lock)
 		}
 	}
