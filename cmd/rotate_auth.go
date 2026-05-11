@@ -226,7 +226,7 @@ func runRotateAuth(cmd *cobra.Command, args []string) error {
 		fmt.Println("anthropic: read API key from ANTHROPIC_API_KEY env var")
 	}
 
-	// AWS Bedrock credentials -- try SSO profile first, then env/static
+	// AWS Bedrock credentials. Try SSO profile first, then env/static
 	awsCreds := resolveAWSCredentials(home)
 	if awsCreds != nil {
 		stringData["AWS_ACCESS_KEY_ID"] = awsCreds.keyID
