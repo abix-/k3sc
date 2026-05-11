@@ -135,7 +135,7 @@ func runCargoLock(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "[cargo-lock] %s acquired lock, running: cargo %s\n", ts, strings.Join(cargoArgs, " "))
 
-	// "run" automatically builds first -- can't run what isn't built
+	// "run" automatically builds first. Can't run what isn't built
 	if cargoArgs[0] == "run" || cargoArgs[0] == "test" {
 		// strip everything after "--" for build (test filters, run args)
 		var filtered []string
