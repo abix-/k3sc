@@ -119,7 +119,7 @@ func buildFamilyDispatchStates(now time.Time, lookback time.Duration, recentChec
 
 	if probes.CodexErr != nil {
 		warnings = append(warnings, fmt.Sprintf("codex quota probe error: %v", probes.CodexErr))
-		// Don't override -- fallback state from initial build already accounts for recent failures
+		// Don't override. Fallback state from initial build already accounts for recent failures
 	} else if probes.Codex != nil {
 		state := familyDispatchState{
 			Available: true,
