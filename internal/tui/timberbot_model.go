@@ -114,7 +114,7 @@ func (m TimberbotModel) View() string {
 
 	var sections []string
 
-	// -- header --
+	//. Header.
 	info := m.data.Info
 	if !info.Enabled {
 		sections = append(sections, red.Render(" Timberbot  STOPPED"))
@@ -157,7 +157,7 @@ func (m TimberbotModel) View() string {
 		sections = append(sections, fmt.Sprintf(" agent: %s  |  pod: %s  |  uptime: %s", active.Agent, active.Name, dur))
 	}
 
-	// -- recent runs --
+	//. Recent runs.
 	sections = append(sections, sep)
 	sections = append(sections, titleFg.Render(" Recent Runs"))
 	completed := completedRuns(m.data.Runs)
@@ -177,7 +177,7 @@ func (m TimberbotModel) View() string {
 		}
 	}
 
-	// -- live log --
+	//. Live log.
 	sections = append(sections, sep)
 	sections = append(sections, titleFg.Render(" Live Log"))
 	if len(m.data.LiveLogs) == 0 {
@@ -201,7 +201,7 @@ func (m TimberbotModel) View() string {
 		}
 	}
 
-	// -- help --
+	//. Help.
 	sections = append(sections, dim.Render(" q: quit  r: refresh"))
 
 	return strings.Join(sections, "\n")
