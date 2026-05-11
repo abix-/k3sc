@@ -14,7 +14,7 @@ import (
 
 const maxLogLines = 8
 
-const maxScanBuffer = 1 << 20 // 1 MB -- handles long tool/log lines
+const maxScanBuffer = 1 << 20 // 1 MB. Handles long tool/log lines
 
 const (
 	initialReconnectDelay = 500 * time.Millisecond
@@ -221,7 +221,7 @@ func (ls *LogStreamer) follow(ctx context.Context, podName string, ps *podStream
 			reconnectDelay = nextReconnectDelay(reconnectDelay)
 			continue
 		}
-		// stream ended (EOF) -- reconnect unless cancelled
+		// stream ended (EOF). Reconnect unless cancelled
 		if !waitForReconnect(ctx, reconnectDelay) {
 			return
 		}
