@@ -155,7 +155,7 @@ if [ -n "${CODEX_AUTH_JSON:-}" ]; then
     chmod 600 "${HOME}/.codex/auth.json"
 fi
 
-# GITHUB_TOKEN env var is auto-detected by gh CLI -- no explicit login needed
+# GITHUB_TOKEN env var is auto-detected by gh CLI. No explicit login needed
 if [ "$JOB_KIND" != "timberbot" ]; then
     if [ -z "${GITHUB_TOKEN:-}" ]; then
         echo "[entrypoint] ERROR: GITHUB_TOKEN env var is required"
