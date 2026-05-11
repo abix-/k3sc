@@ -231,7 +231,7 @@ func (r *Reconciler) handleCompleted(ctx context.Context, task *AgentJob) (ctrl.
 		if returnTo == "" {
 			returnTo = "ready"
 		}
-		// failed reviews escalate to human -- don't loop back to needs-review
+		// failed reviews escalate to human. Don't loop back to needs-review
 		if returnTo == "needs-review" {
 			returnTo = "needs-human"
 		}
