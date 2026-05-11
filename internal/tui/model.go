@@ -317,7 +317,7 @@ func (m Model) renderView(maxVisibleTasks int) string {
 
 	var sections []string
 
-	// -- cluster --
+	//. Cluster.
 	pauseStr := ""
 	if m.paused {
 		pauseStr = "  |  PAUSED"
@@ -350,7 +350,7 @@ func (m Model) renderView(maxVisibleTasks int) string {
 	sections = append(sections, titleFg.Render(" Quota"))
 	sections = append(sections, strings.Join(quotaLines, "\n"))
 
-	// -- local review reservations --
+	//. Local review reservations.
 	var reservationLines []string
 	if len(d.Dispatch.ReviewReservations) == 0 {
 		reservationLines = append(reservationLines, dim.Render("  (no local PR reservations)"))
@@ -376,7 +376,7 @@ func (m Model) renderView(maxVisibleTasks int) string {
 	sections = append(sections, titleFg.Render(" Local Review"))
 	sections = append(sections, strings.Join(reservationLines, "\n"))
 
-	// -- dispatcher (toggle with d) --
+	//. Dispatcher (toggle with d).
 	if m.showOperator {
 		var dispLines []string
 		if d.OperatorLog == "" {
@@ -401,7 +401,7 @@ func (m Model) renderView(maxVisibleTasks int) string {
 		sections = append(sections, strings.Join(dispLines, "\n"))
 	}
 
-	// -- issues --
+	//. Issues.
 	var issueLines []string
 	if len(d.Issues) == 0 {
 		issueLines = append(issueLines, dim.Render("  (no issues with workflow labels)"))
@@ -428,7 +428,7 @@ func (m Model) renderView(maxVisibleTasks int) string {
 	sections = append(sections, titleFg.Render(" GitHub Issues"))
 	sections = append(sections, strings.Join(issueLines, "\n"))
 
-	// -- operator tasks --
+	//. Operator tasks.
 	var taskLines []string
 	tRunning, tDone, tFailed, tBlocked := 0, 0, 0, 0
 	for _, t := range d.Tasks {
@@ -478,7 +478,7 @@ func (m Model) renderView(maxVisibleTasks int) string {
 	sections = append(sections, titleFg.Render(taskTitle))
 	sections = append(sections, strings.Join(taskLines, "\n"))
 
-	// -- security events --
+	//. Security events.
 	var secLines []string
 	for _, t := range d.Tasks {
 		if len(t.SecurityEvents) > 0 {
@@ -493,7 +493,7 @@ func (m Model) renderView(maxVisibleTasks int) string {
 		sections = append(sections, strings.Join(secLines, "\n"))
 	}
 
-	// -- costs --
+	//. Costs.
 	var costLines []string
 	if len(d.Costs) == 0 {
 		costLines = append(costLines, dim.Render("  (no cost data)"))
@@ -574,7 +574,7 @@ func (m Model) renderView(maxVisibleTasks int) string {
 	sections = append(sections, titleFg.Render(" Costs"))
 	sections = append(sections, strings.Join(costLines, "\n"))
 
-	// -- pull requests --
+	//. Pull requests.
 	var prLines []string
 	if len(d.PRs) == 0 {
 		prLines = append(prLines, dim.Render("  (no open pull requests)"))
@@ -599,7 +599,7 @@ func (m Model) renderView(maxVisibleTasks int) string {
 	sections = append(sections, titleFg.Render(" Pull Requests"))
 	sections = append(sections, strings.Join(prLines, "\n"))
 
-	// -- errors (toggle with e) --
+	//. Errors (toggle with e).
 	if m.showErrors && m.errorLines != nil {
 		errLines := m.errorLines()
 		var errSection []string
@@ -615,7 +615,7 @@ func (m Model) renderView(maxVisibleTasks int) string {
 		sections = append(sections, strings.Join(errSection, "\n"))
 	}
 
-	// -- status + help --
+	//. Status + help.
 	if m.statusMsg != "" {
 		sections = append(sections, yellow.Render(" "+m.statusMsg))
 	}
