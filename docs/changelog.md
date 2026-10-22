@@ -22,6 +22,12 @@ These rules govern `docs/changelog.md`. Follow them exactly.
 - Use plain terms. Do not use vague descriptions, invented language, or design
   essays.
 
+## 2026-10-22
+
+| System | Item | Done when |
+|---|---|---|
+| cmd/cargo_lock.go | [x] Let Cargo build test and run targets once | Removed the redundant preliminary build while preserving the shared lock, manifest discovery, arguments and exit status. go test ./..., go vet ./... and local CLI build passed. Installed Windows CLI ran LOTJ's existing production catalog check with one Cargo invocation and no preliminary build; cached compile0.52s, test0.70s. Previous CLI executable retained; no Kubernetes rollout. |
+
 ## 2026-10-21
 
 | System | Item | Done when |

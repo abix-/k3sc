@@ -135,30 +135,9 @@ func runCargoLock(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "[cargo-lock] %s acquired lock, running: cargo %s\n", ts, strings.Join(cargoArgs, " "))
 
-	// "run" automatically builds first. Can't run what isn't built
-	if cargoArgs[0] == "run" || cargoArgs[0] == "test" {
-		// strip everything after "--" for build (test filters, run args)
-		var filtered []string
-		for _, a := range cargoArgs[1:] {
-			if a == "--" {
-				break
-			}
-			filtered = append(filtered, a)
-		}
-		buildArgs := append([]string{"build"}, filtered...)
-		fmt.Fprintf(os.Stderr, "[cargo-lock] %s running: cargo %s\n", time.Now().Format("15:04:05"), strings.Join(buildArgs, " "))
-		b := exec.Command("cargo", buildArgs...)
-		b.Stdout = os.Stdout
-		b.Stderr = os.Stderr
-		if err := b.Run(); err != nil {
-			if exitErr, ok := err.(*exec.ExitError); ok {
-				os.Exit(exitErr.ExitCode())
-			}
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "[cargo-lock] %s build ok, running: cargo %s\n", time.Now().Format("15:04:05"), strings.Join(cargoArgs, " "))
-	}
-
+	// Cargo test/run already build their selected targets under this lock.
+	// A separate build compiles a different lib artifact for test --lib and
+	// misinterprets test filters as build arguments.
 	c := exec.Command("cargo", cargoArgs...)
 	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
